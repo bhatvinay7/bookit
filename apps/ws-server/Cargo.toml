@@ -1,0 +1,30 @@
+[package]
+name = "ws-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+redis-conn = { path = "../../packages/redis-conn" }
+rmq-conn = { path = "../../packages/rmq-conn" }
+bookit-db = { path = "../../packages/db" }
+diesel = { version = "2.3.11", features = ["postgres", "r2d2", "chrono", "numeric"] }
+axum = { version = "0.8.9", features = ["ws"] }
+chrono = "0.4.45"
+futures = "0.3.32"
+jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+rustls = { version = "0.23", features = ["ring"] }
+tokio = { version = "1.53.0", features = ["full"] }
+tracing = "0.1.44"
+lapin = { version = "4.10.0", features = ["rustls"] }
+redis = { version = "1.4.1", features = ["tokio-comp", "connection-manager"] }
+tonic = "0.12"
+prost = "0.13"
+dashmap = "6.1"
+uuid = { version = "1.10", features = ["v4", "fast-rng", "macro-diagnostics"] }
+dotenvy = "0.15"
+
+[build-dependencies]
+tonic-build = "0.12"
+protoc-bin-vendored = "3.0.0"
