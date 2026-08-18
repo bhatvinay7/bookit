@@ -1,0 +1,34 @@
+[package]
+name = "gateway-keeper"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bookit-telemetry = { version = "0.1.0", path = "../../packages/telemetry" }
+bookit-proto = { path = "../../packages/proto" }
+axum = "0.8.9"
+chrono = "0.4"
+dashmap = "6.1"
+dotenvy = "0.15"
+jsonwebtoken = { version = "10.4.0", features = ["rust_crypto"] }
+prost = "0.13"
+redis = { version = "1.4.1", features = ["tokio-native-tls-comp", "tokio-comp", "connection-manager"] }
+redis-conn = { path = "../../packages/redis-conn" }
+rustls = { version = "0.23", features = ["ring"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+tokio = { version = "1.53.0", features = ["full"] }
+tonic = "0.12"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.19"
+tower-http = { version = "0.6", features = ["cors"] }
+reqwest = { version = "0.12", features = ["json", "stream"] }
+bytes = "1"
+rmq-conn = { version = "0.1.0", path = "../../packages/rmq-conn" }
+lapin = { version = "4.10.0", features = ["rustls"] }
+futures-util = "0.3.34"
+
+
+[build-dependencies]
+protoc-bin-vendored = "3.0.0"
+tonic-build = "0.12"
