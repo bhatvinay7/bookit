@@ -1,0 +1,24 @@
+[package]
+name = "notification-worker"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bookit-telemetry = { version = "0.1.0", path = "../../packages/telemetry" }
+futures = "0.3.32"
+lapin = { version = "4.10.0", features = ["rustls"] }
+rustls = { version = "0.23", features = ["ring"] }
+rmq-conn = { version = "0.1.0", path = "../../packages/rmq-conn" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+tokio = { version = "1.53.0", features = ["full"] }
+tokio-stream = "0.1.18"
+bookit-db = { version = "0.1.0", path = "../../packages/db" }
+diesel = "2.3.11"
+lettre = { version = "0.11", default-features = false, features = ["tokio1", "tokio1-rustls-tls", "smtp-transport", "builder"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+uuid = { version = "1.24.0", features = ["v4", "serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+bigdecimal = { version = "0.4", features = ["serde"] }
+dotenvy = "0.15"
+anyhow = "1.0"
