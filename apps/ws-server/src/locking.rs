@@ -1,6 +1,5 @@
 use redis::{AsyncCommands, aio::ConnectionLike};
-use redis_conn::RedisPool;
-use redis_conn::keys;
+use redis_conn::{RedisPool, SeatLock, keys};
 use serde::Serialize;
 use serde_json::{Value, json};
 use tracing::error;
@@ -10,6 +9,15 @@ pub struct RoomSeatSnapshot {
     pub seat_id: i32,
     pub status: String,
     pub user_id: Option<i32>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SeatStatusPayload {
+    #[serde(rename = "seatId")]
+    pub seat_id: i32,
+    #[serde(rename = "showId")]
+    pub show_id: i32,
+    pub state: String,
 }
 
 /// Two bits are reserved for each seat in the per-schedule Redis bitmap.
@@ -124,7 +132,7 @@ pub async fn sync_locks_from_zset(
     redis_pool: &RedisPool,
     user_id: i32,
     showtime_id: i32,
-) -> Vec<i32> {
+) -> Vec<SeatStatusPayload> {
     let mut redis_cli = match redis_pool.get().await {
         Ok(cli) => cli,
         Err(_) => return vec![],
@@ -144,7 +152,13 @@ pub async fn sync_locks_from_zset(
         .unwrap_or_default();
     locked_seats
         .into_iter()
-        .filter_map(|seat| parse_member_seat_id(&seat))
+        .filter_map(|seat| {
+            parse_member_seat_id(&seat).map(|seat_id| SeatStatusPayload {
+                seat_id,
+                show_id: showtime_id,
+                state: "locked".to_string(),
+            })
+        })
         .collect()
 }
 
@@ -152,7 +166,7 @@ pub async fn sync_room_state_snapshot(
     redis_pool: &RedisPool,
     user_id: i32,
     showtime_id: i32,
-) -> (Vec<RoomSeatSnapshot>, Vec<i32>) {
+) -> (Vec<RoomSeatSnapshot>, Vec<SeatStatusPayload>) {
     let mut redis_cli = match redis_pool.get().await {
         Ok(cli) => cli,
         Err(_) => return (vec![], vec![]),
@@ -172,12 +186,18 @@ pub async fn sync_room_state_snapshot(
         .query_async(&mut *redis_cli)
         .await
         .unwrap_or(None);
-    let active_locks: Vec<i32> = redis_cli
+    let active_locks: Vec<SeatStatusPayload> = redis_cli
         .zrange::<_, Vec<String>>(&user_zset_key, 0, -1)
         .await
         .unwrap_or_default()
         .into_iter()
-        .filter_map(|seat| parse_member_seat_id(&seat))
+        .filter_map(|seat| {
+            parse_member_seat_id(&seat).map(|seat_id| SeatStatusPayload {
+                seat_id,
+                show_id: showtime_id,
+                state: "locked".to_string(),
+            })
+        })
         .collect();
 
     let mut seats = Vec::new();
@@ -207,6 +227,7 @@ pub async fn sync_room_state_snapshot(
 
 pub async fn confirm_payment(
     redis_pool: &RedisPool,
+    single_node_lock: &dyn SeatLock,
     user_id: i32,
     showtime_id: i32,
     seat_ids: Vec<i32>,
@@ -216,45 +237,14 @@ pub async fn confirm_payment(
         Err(_) => return false,
     };
 
-    let user_zset_key = format!("{}:{}", showtime_id, user_id);
-    let processing_queue_key = keys::seat_processing_queue_key();
     let mut success = true;
 
     for seat_id in seat_ids {
-        let lock_key = keys::seat_lock_key(showtime_id, seat_id);
-        let is_locked =
-            seat_state(&mut *redis_cli, showtime_id, seat_id).await == SeatState::Locked;
+        let deleted_and_booked = single_node_lock
+            .book_seat_lua(showtime_id, seat_id, user_id)
+            .await;
 
-        // Redlock atomic verification & deletion
-        let script = redis::Script::new(
-            r#"
-            if redis.call("get", KEYS[1]) == ARGV[1] then
-                return redis.call("del", KEYS[1])
-            else
-                return 0
-            end
-        "#,
-        );
-        let deleted: i32 = script
-            .key(&lock_key)
-            .arg(user_id)
-            .invoke_async(&mut *redis_cli)
-            .await
-            .unwrap_or(0);
-
-        if deleted == 1 && is_locked {
-            // Remove from ZSETs since it's now permanently BOOKED
-            let user_zset_entry = seat_id.to_string();
-            let processing_queue_entry = make_queue_member(seat_id, showtime_id, user_id);
-            let _: () = redis_cli
-                .zrem(&user_zset_key, &user_zset_entry)
-                .await
-                .unwrap_or(());
-            let _: () = redis_cli
-                .zrem(&processing_queue_key, &processing_queue_entry)
-                .await
-                .unwrap_or(());
-
+        if deleted_and_booked {
             set_seat_state(&mut *redis_cli, showtime_id, seat_id, SeatState::Booked).await;
         } else {
             success = false;

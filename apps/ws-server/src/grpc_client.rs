@@ -13,7 +13,8 @@ pub struct GrpcLockClient {
 
 impl GrpcLockClient {
     pub async fn connect(url: String) -> Result<Self, tonic::transport::Error> {
-        let client = SlotLockingServiceClient::connect(url).await?;
+        let endpoint = tonic::transport::Endpoint::from_shared(url)?;
+        let client = SlotLockingServiceClient::new(endpoint.connect_lazy());
         Ok(Self { client })
     }
 
