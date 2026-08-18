@@ -1,0 +1,3 @@
+DROP TABLE IF EXISTS user_audits;
+DROP TABLE IF EXISTS tickets;
+DROP TABLE IF EXISTS orders;

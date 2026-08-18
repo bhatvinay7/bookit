@@ -1,0 +1,11 @@
+DROP TABLE IF EXISTS showtime_seats;
+DROP TABLE IF EXISTS bookings;
+DROP TABLE IF EXISTS showtimes;
+DROP TABLE IF EXISTS seats;
+DROP TABLE IF EXISTS screens;
+DROP TABLE IF EXISTS movies;
+DROP TABLE IF EXISTS users;
+
+DROP TYPE IF EXISTS seat_status;
+DROP TYPE IF EXISTS booking_status;
+DROP TYPE IF EXISTS user_role;
