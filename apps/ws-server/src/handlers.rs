@@ -52,8 +52,14 @@ pub async fn handle_socket(
     state
         .hooks
         .adapter
-        .add_local_connection(socket_id.clone(), user_id, tx);
+        .add_local_connection(socket_id.clone(), user_id, tx.clone());
     state.hooks.on_register(user_id, &socket_id).await;
+
+    let ack_msg = serde_json::json!({
+        "event": "auth_ack",
+        "user_id": user_id
+    });
+    let _ = tx.send(ack_msg.to_string());
 
     // Send task
     let mut send_task = tokio::spawn(async move {

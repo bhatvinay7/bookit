@@ -1,3 +1,4 @@
+
 mod grpc_client;
 mod handlers;
 mod hooks;
@@ -16,7 +17,7 @@ use grpc_client::GrpcLockClient;
 use handlers::handle_socket;
 use hooks::WsHooks;
 use redis_conn::adapter::RedisSocketAdapter;
-use redis_conn::establish_pool;
+use redis_conn::{establish_pool, establish_seat_lock};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -37,23 +38,28 @@ struct Claims {
 
 #[tokio::main]
 async fn main() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
     let _ = dotenvy::dotenv();
+    bookit_telemetry::init_telemetry("bookit-ws-server");
+    let _ = rustls::crypto::ring::default_provider().install_default();
     println!("Starting WebSocket Server with gRPC integration...");
 
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1/".into());
+    let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
     let gateway_grpc_url =
         std::env::var("GATEWAY_KEEPER_GRPC_URL").unwrap_or_else(|_| "http://[::1]:50052".into());
     let grpc_client = GrpcLockClient::connect(gateway_grpc_url)
         .await
         .expect("Failed to connect to gateway keeper gRPC server");
     let redis_pool = establish_pool().await.expect("Failed to create Redis pool");
+    let single_node_lock = establish_seat_lock()
+        .await
+        .expect("Failed to create SeatLock");
 
     let adapter = RedisSocketAdapter::new(redis_url.clone());
     let hooks = Arc::new(WsHooks::new(
         adapter.clone(),
         redis_pool.clone(),
         grpc_client,
+        single_node_lock,
     ));
 
     let state = Arc::new(AppState { hooks });

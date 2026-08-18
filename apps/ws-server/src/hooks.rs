@@ -1,17 +1,16 @@
 use crate::grpc_client::GrpcLockClient;
 use crate::locking::{confirm_payment, sync_locks_from_zset, sync_room_state_snapshot};
 use redis::AsyncCommands;
-use redis_conn::RedisPool;
-use redis_conn::adapter::PubSubEvent;
-use redis_conn::adapter::RedisSocketAdapter;
-use redis_conn::keys;
+use redis_conn::{RedisPool, SeatLock, adapter::{PubSubEvent, RedisSocketAdapter}, keys};
 use serde_json::json;
+use std::sync::Arc;
 use tracing::{error, info};
 
 pub struct WsHooks {
     pub adapter: RedisSocketAdapter,
     pub redis_pool: RedisPool,
     pub grpc_client: GrpcLockClient,
+    pub single_node_lock: Arc<dyn SeatLock>,
 }
 
 impl WsHooks {
@@ -19,40 +18,33 @@ impl WsHooks {
         adapter: RedisSocketAdapter,
         redis_pool: RedisPool,
         grpc_client: GrpcLockClient,
+        single_node_lock: Arc<dyn SeatLock>,
     ) -> Self {
         Self {
             adapter,
             redis_pool,
             grpc_client,
+            single_node_lock,
         }
     }
 
     pub async fn on_lock_request(&self, user_id: i32, showtime_id: i32, seat_ids: Vec<i32>) {
-        let response_payload = match self
+        if let Err(err) = self
             .grpc_client
             .lock_slot(showtime_id, seat_ids.clone(), user_id)
             .await
         {
-            Ok((success, _, locked_seat_ids, failed_seat_ids)) => json!({
+            error!(?err, "gateway keeper rejected lock request");
+            let response_payload = json!({
                 "event": "lock_slots_response",
                 "showtime_id": showtime_id,
-                "success": success,
-                "locked_seat_ids": locked_seat_ids,
-                "failed_seat_ids": failed_seat_ids,
-            }),
-            Err(err) => {
-                error!(?err, "gateway keeper rejected lock request");
-                json!({
-                    "event": "lock_slots_response",
-                    "showtime_id": showtime_id,
-                    "success": false,
-                    "locked_seat_ids": [],
-                    "failed_seat_ids": seat_ids,
-                })
-            }
-        };
-        self.adapter
-            .send_to_user_local(user_id, &response_payload.to_string());
+                "success": false,
+                "locked_seat_ids": [],
+                "failed_seat_ids": seat_ids,
+            });
+            self.adapter
+                .send_to_user_local(user_id, &response_payload.to_string());
+        }
     }
 
     pub async fn on_unlock_request(&self, user_id: i32, showtime_id: i32, seat_ids: Vec<i32>) {
@@ -140,8 +132,14 @@ impl WsHooks {
             user_id, showtime_id, seat_ids
         );
 
-        let success =
-            confirm_payment(&self.redis_pool, user_id, showtime_id, seat_ids.clone()).await;
+        let success = confirm_payment(
+            &self.redis_pool,
+            self.single_node_lock.as_ref(),
+            user_id,
+            showtime_id,
+            seat_ids.clone(),
+        )
+        .await;
         if success {
             let event = PubSubEvent::PaymentConfirmed {
                 user_id,

@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bookit-telemetry = { version = "0.1.0", path = "../../packages/telemetry" }
 redis-conn = { path = "../../packages/redis-conn" }
 rmq-conn = { path = "../../packages/rmq-conn" }
 bookit-db = { path = "../../packages/db" }
@@ -18,7 +19,7 @@ rustls = { version = "0.23", features = ["ring"] }
 tokio = { version = "1.53.0", features = ["full"] }
 tracing = "0.1.44"
 lapin = { version = "4.10.0", features = ["rustls"] }
-redis = { version = "1.4.1", features = ["tokio-comp", "connection-manager"] }
+redis = { version = "1.4.1", features = ["tokio-native-tls-comp", "tokio-comp", "connection-manager"] }
 tonic = "0.12"
 prost = "0.13"
 dashmap = "6.1"
