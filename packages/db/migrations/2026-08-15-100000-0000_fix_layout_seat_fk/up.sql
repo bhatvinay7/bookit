@@ -1,0 +1,1 @@
+ALTER TABLE schedule_seats DROP CONSTRAINT IF EXISTS schedule_seats_layout_seat_id_fkey; ALTER TABLE schedule_seats ADD CONSTRAINT schedule_seats_layout_seat_id_fkey FOREIGN KEY (layout_seat_id) REFERENCES seat_layout_seats(id) ON DELETE SET NULL;

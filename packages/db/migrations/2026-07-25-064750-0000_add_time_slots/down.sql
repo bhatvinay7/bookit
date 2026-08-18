@@ -1,0 +1,5 @@
+ALTER TABLE schedules DROP CONSTRAINT IF EXISTS unique_schedule_slot;
+ALTER TABLE schedules DROP COLUMN IF EXISTS end_time;
+ALTER TABLE schedules DROP COLUMN IF EXISTS date;
+ALTER TABLE schedules DROP COLUMN IF EXISTS slot;
+DROP TYPE IF EXISTS time_slot;
