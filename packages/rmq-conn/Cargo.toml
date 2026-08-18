@@ -1,0 +1,12 @@
+[package]
+name = "rmq-conn"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+futures = "0.3.32"
+lapin = { version = "4.10.0", features = ["rustls"] }
+tokio = { version = "1.53.0", features = ["full"] }
+tokio-retry = "0.3.2"
+tracing = "0.1.44"
+tracing-subscriber = "0.3.23"
