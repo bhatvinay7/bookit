@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo, useCallback, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Check } from "lucide-react";
 import { useSeatLocking } from "@/hooks/useSeatLocking";
+import { useSocket } from "@/components/SocketProvider";
 import Link from "next/link";
 import type { ScheduleV2, ScheduleSeat } from "@/types/schedule";
 
@@ -20,7 +21,7 @@ import { SeatMap, type SeatTier } from "./components/SeatMap";
 import { BookingSummarySidebar } from "./components/BookingSummarySidebar";
 import { DiscrepancyModal } from "./components/DiscrepancyModal";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 export default function BookingWorkspacePage() {
   const params = useParams();
@@ -36,6 +37,11 @@ export default function BookingWorkspacePage() {
 
   const [picked, setPicked] = useState<number[]>([]);
   const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [myBookingIds, setMyBookingIds] = useState<number[]>([]);
+  const [isRouting, setIsRouting] = useState(false);
+  const [successToast, setSuccessToast] = useState(false);
+
+  const { wsUserId } = useSocket();
 
   const {
     lockedSeatIds,
@@ -51,7 +57,12 @@ export default function BookingWorkspacePage() {
     bookedSeatIds,
     externallyLockedSeats,
     clearExternallyLockedSeat,
-  } = useSeatLocking(scheduleId);
+  } = useSeatLocking(scheduleId ?? 0, () => {
+    setSuccessToast(true);
+    setTimeout(() => setSuccessToast(false), 3000);
+  });
+
+  const syncedLocksRef = useRef(new Set<number>());
 
   // Inline toast state for seat-unavailable notifications
   const [seatToasts, setSeatToasts] = useState<{ id: number; seatLabel: string }[]>([]);
@@ -60,10 +71,32 @@ export default function BookingWorkspacePage() {
   useEffect(() => {
     async function load() {
       try {
-        const [schedRes, seatsRes] = await Promise.all([
+        let uid: number | null = null;
+        try {
+          const token = localStorage.getItem("user_token");
+          if (token) {
+            if (token === "mock_token") {
+              uid = 1;
+            } else {
+              const parts = token.split(".");
+              if (parts.length === 3) {
+                const payload = JSON.parse(atob(parts[1]));
+                uid = payload.sub ? Number(payload.sub) : null;
+              }
+            }
+          }
+        } catch {}
+
+        const calls: Promise<Response>[] = [
           fetch(`${API_URL}/api/user/schedules_v2/${scheduleId}`),
           fetch(`${API_URL}/api/user/schedules_v2/${scheduleId}/seats`),
-        ]);
+        ];
+
+        if (uid) {
+          calls.push(fetch(`${API_URL}/api/user/${uid}/tickets`));
+        }
+
+        const [schedRes, seatsRes, ticketsRes] = await Promise.all(calls);
 
         if (!schedRes.ok) throw new Error("Schedule not found");
         const schedData = await schedRes.json();
@@ -73,6 +106,12 @@ export default function BookingWorkspacePage() {
         const seatsData = await seatsRes.json();
         const initialSeats = seatsData.seats as ScheduleSeat[];
         setSeats(initialSeats);
+
+        if (ticketsRes && ticketsRes.ok) {
+          const ticketsData = await ticketsRes.json();
+          setMyBookingIds(ticketsData.map((t: any) => t.booking_id));
+        }
+
         // Build a label map (e.g. "A3") so toasts can show human-readable seat names
         initialSeats.forEach((s: ScheduleSeat) => {
           seatLabelMap.current.set(s.id, `${s.row_letter}${s.seat_number}`);
@@ -80,44 +119,39 @@ export default function BookingWorkspacePage() {
 
         // Restore locked-seat state from the websocket-backed schedule payload after refresh
         try {
-          const token = localStorage.getItem("user_token");
-          if (token && token !== "mock_token") {
-            const parts = token.split(".");
-            if (parts.length === 3) {
-              const payload = JSON.parse(atob(parts[1]));
-              const uid = payload.sub ? Number(payload.sub) : null;
-              if (uid) {
-                const lockedSeatIdsFromServer = initialSeats
-                  .filter((seat: SeatLockSnapshot) => seat.status === "Locked")
-                  .map((seat: SeatLockSnapshot) => seat.id);
+          if (uid) {
+            const token = localStorage.getItem("user_token");
+            if (token) {
+              const lockedSeatIdsFromServer = initialSeats
+                .filter((seat: SeatLockSnapshot) => seat.status === "Locked")
+                .map((seat: SeatLockSnapshot) => seat.id);
 
-                const myActiveLocks = initialSeats
-                  .filter(
-                    (seat: SeatLockSnapshot) =>
-                      seat.status === "Locked" &&
-                      seat.locked_by_user_id != null &&
-                      Number(seat.locked_by_user_id) === uid
-                  )
-                  .map((seat: SeatLockSnapshot) => seat.id);
+              const myActiveLocks = initialSeats
+                .filter(
+                  (seat: SeatLockSnapshot) =>
+                    seat.status === "Locked" &&
+                    seat.locked_by_user_id != null &&
+                    Number(seat.locked_by_user_id) === uid
+                )
+                .map((seat: SeatLockSnapshot) => seat.id);
 
-                if (lockedSeatIdsFromServer.length > 0) {
-                  setLockedSeatIds(lockedSeatIdsFromServer);
-                }
+              if (lockedSeatIdsFromServer.length > 0) {
+                setLockedSeatIds(lockedSeatIdsFromServer);
+              }
 
-                if (myActiveLocks.length > 0) {
-                  setMyLockedSeats(myActiveLocks);
-                  setPicked((prev) => Array.from(new Set([...prev, ...myActiveLocks])));
-                } else {
-                  setMyLockedSeats([]);
-                }
+              if (myActiveLocks.length > 0) {
+                setMyLockedSeats(myActiveLocks);
+                setPicked((prev) => Array.from(new Set([...prev, ...myActiveLocks])));
+              } else {
+                setMyLockedSeats([]);
               }
             }
           }
-        } catch {
-          // ignore token parse errors
+        } catch (e) {
+          // ignore
         }
       } catch (err: unknown) {
-        const message = err instanceof Error ? err.message : "Unexpected error";
+        const message = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : "Unexpected error";
         setError(message);
       } finally {
         setLoading(false);
@@ -148,31 +182,7 @@ export default function BookingWorkspacePage() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [externallyLockedSeats]);
 
-  const myBookedSeatIds: number[] = useMemo(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const stored = localStorage.getItem(`my_booked_seats_${scheduleId}`);
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  }, [scheduleId]);
 
-  const currentUserId = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    try {
-      const token = localStorage.getItem("user_token");
-      if (!token || token === "mock_token") return null;
-      const parts = token.split(".");
-      if (parts.length === 3) {
-        const payload = JSON.parse(atob(parts[1]));
-        return payload.sub ? Number(payload.sub) : null;
-      }
-    } catch {
-      return null;
-    }
-    return null;
-  }, []);
 
   const seatRows = useMemo(() => {
     const rows = new Map<string, ScheduleSeat[]>();
@@ -189,14 +199,13 @@ export default function BookingWorkspacePage() {
         .sort((a, b) => a.seat_number - b.seat_number)
         .map((s) => {
           const computedStatus: "available" | "booked" | "locked" | "my_booked" | "my_locked" =
-            myBookedSeatIds.includes(s.id) ||
-            (s.status === "Booked" && (s.locked_by_user_id ?? null) === currentUserId)
+            (s.status === "Booked" && s.booking_id != null && myBookingIds.includes(s.booking_id))
               ? "my_booked"
               : myLockedSeats.includes(s.id) ||
                 (s.status === "Locked" &&
                   s.locked_by_user_id != null &&
-                  currentUserId != null &&
-                  Number(s.locked_by_user_id) === currentUserId)
+                  wsUserId != null &&
+                  Number(s.locked_by_user_id) === wsUserId)
               ? "my_locked"
               : s.status === "Booked" || bookedSeatIds.includes(s.id)
               ? "booked"
@@ -214,7 +223,7 @@ export default function BookingWorkspacePage() {
           };
         }),
     }));
-  }, [seats, lockedSeatIds, bookedSeatIds, myBookedSeatIds, myLockedSeats, isLocking, picked, currentUserId]);
+  }, [seats, lockedSeatIds, bookedSeatIds, myBookingIds, myLockedSeats, isLocking, picked, wsUserId]);
 
   const seatTiers: SeatTier[] = useMemo(() => {
     const tiers = new Map<string, typeof seatRows>();
@@ -283,27 +292,34 @@ export default function BookingWorkspacePage() {
   };
 
   const handleProceedToCheckout = () => {
+    const newPicked = picked.filter((id) => !myLockedSeats.includes(id));
+    
+    if (newPicked.length > 0) {
+      const token = localStorage.getItem("user_token");
+      if (!token) {
+        setIsRouting(true);
+        router.push(`/login?redirect=/schedules/${scheduleId}`);
+        return;
+      }
+      requestLock(newPicked);
+      return;
+    }
+
     if (myLockedSeats.length > 0) {
+      setIsRouting(true);
       router.push(
         `/checkout?scheduleId=${scheduleId}&seats=${myLockedSeats.join(",")}`
       );
-      return;
     }
-
-    if (picked.length === 0) return;
-
-    const token = localStorage.getItem("user_token");
-    if (!token) {
-      router.push(`/login?redirect=/schedules/${scheduleId}`);
-      return;
-    }
-
-    requestLock(picked);
   };
 
   useEffect(() => {
     if (myLockedSeats.length > 0) {
-      setPicked((prev) => Array.from(new Set([...prev, ...myLockedSeats])));
+      const newLocks = myLockedSeats.filter(id => !syncedLocksRef.current.has(id));
+      if (newLocks.length > 0) {
+        newLocks.forEach(id => syncedLocksRef.current.add(id));
+        setPicked((prev) => Array.from(new Set([...prev, ...newLocks])));
+      }
     }
   }, [myLockedSeats]);
 
@@ -317,7 +333,7 @@ export default function BookingWorkspacePage() {
     }> = [];
     seatRows.forEach((r) =>
       r.seats.forEach((s) => {
-        if (picked.includes(s.id)) {
+        if (picked.includes(s.id) || myLockedSeats.includes(s.id)) {
           sum += s.price;
           selected.push({
             id: s.id,
@@ -329,16 +345,19 @@ export default function BookingWorkspacePage() {
       })
     );
     return { totalPrice: sum, summarySeats: selected };
-  }, [picked, seatRows]);
+  }, [myLockedSeats, seatRows]);
 
   const handleCheckout = () => {
-    if (picked.length === 0) return;
+    const newPicked = picked.filter((id) => !myLockedSeats.includes(id));
+    if (newPicked.length === 0) return;
+    
     const token = localStorage.getItem("user_token");
     if (!token) {
+      setIsRouting(true);
       router.push(`/login?redirect=/schedules/${scheduleId}`);
       return;
     }
-    requestLock(picked);
+    requestLock(newPicked);
   };
 
   if (loading) {
@@ -437,7 +456,7 @@ export default function BookingWorkspacePage() {
         />
 
         {(myLockedSeats.length > 0 || isLocking) && (
-          <div className="w-full my-6 bg-amber-500/15 border-2 border-amber-500/30 text-amber-900 dark:text-amber-200 p-4 rounded-2xl flex items-center justify-between shadow-sm">
+          <div className="w-full my-6 bg-gray-200 border-2 border-gray-300 text-black dark:bg-gray-800 dark:border-gray-700 dark:text-white p-4 rounded-2xl flex items-center justify-between shadow-sm">
             <div className="flex items-center gap-3">
               <span className="text-xl">🔒</span>
               <div>
@@ -449,7 +468,7 @@ export default function BookingWorkspacePage() {
                 </p>
               </div>
             </div>
-            <div className="hidden sm:flex items-center gap-2 bg-amber-500 text-white font-mono font-black text-sm px-3.5 py-1.5 rounded-xl shadow-inner">
+            <div className="hidden sm:flex items-center gap-2 bg-gray-300 text-black dark:bg-gray-700 dark:text-white font-mono font-black text-sm px-3.5 py-1.5 rounded-xl shadow-inner">
               ⏱ 5:00 LEFT
             </div>
           </div>
@@ -467,7 +486,9 @@ export default function BookingWorkspacePage() {
             summarySeats={summarySeats}
             totalPrice={totalPrice}
             pickedCount={picked.length}
+            unlockedPickedCount={picked.filter(id => !myLockedSeats.includes(id)).length}
             isLocking={isLocking}
+            isRouting={isRouting}
             hasLockedSeats={myLockedSeats.length > 0}
             onCheckout={handleCheckout}
             onProceed={handleProceedToCheckout}
@@ -528,6 +549,30 @@ export default function BookingWorkspacePage() {
               Seat <strong>{toast.seatLabel}</strong> is no longer available
             </motion.div>
           ))}
+          {successToast && (
+            <motion.div
+              initial={{ opacity: 0, y: 40, scale: 0.92 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9, transition: { duration: 0.2 } }}
+              style={{
+                pointerEvents: "auto",
+                background: "#ecfdf5",
+                color: "#065f46",
+                border: "1px solid #6ee7b7",
+                padding: "12px 18px",
+                borderRadius: 12,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                fontSize: 14,
+                fontWeight: 600,
+              }}
+            >
+              <span style={{ fontSize: 18 }}>✅</span>
+              Seats successfully locked!
+            </motion.div>
+          )}
         </AnimatePresence>
       </div>
     </div>

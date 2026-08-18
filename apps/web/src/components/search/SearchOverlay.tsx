@@ -1,123 +1,379 @@
-import React, { useEffect, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+"use client";
+
+import React, { useEffect, useRef, useState, useCallback } from "react";
+import { Search, X, Loader2, ArrowRight, MapPin } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
-import type { Show } from "@/types";
+import { useRouter } from "next/navigation";
 import { useSearchShows } from "@/hooks/useApi";
+import { CitySelector } from "@/components/CitySelector";
+import type { Show } from "@/types";
 
 interface SearchOverlayProps {
   isOpen: boolean;
   onClose: () => void;
-  shows: Show[]; // Now only used as fallback if we want, but we won't need it.
-  onSelectShow: (show: Show) => void;
+  /** Legacy props — kept for backwards-compat, not used */
+  shows?: Show[];
+  onSelectShow?: (show: Show) => void;
 }
 
-export function SearchOverlay({ isOpen, onClose, shows, onSelectShow }: SearchOverlayProps) {
+const TYPE_COLORS: Record<string, string> = {
+  Movie: "rgba(99,102,241,0.15)",
+  Concert: "rgba(236,72,153,0.15)",
+  Event: "rgba(234,179,8,0.15)",
+  GameEvent: "rgba(16,185,129,0.15)",
+};
+const TYPE_TEXT: Record<string, string> = {
+  Movie: "#818cf8",
+  Concert: "#f472b6",
+  Event: "#facc15",
+  GameEvent: "#34d399",
+};
+const TYPE_EMOJI: Record<string, string> = {
+  Movie: "🎬",
+  Concert: "🎵",
+  Event: "🎪",
+  GameEvent: "🏟️",
+};
+
+export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
+  const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [activeIdx, setActiveIdx] = useState(-1);
+  const [city, setCity] = useState("All");
 
+  // Debounce
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedQuery(query), 280);
+    return () => clearTimeout(t);
+  }, [query]);
+
+  // Reset when opened
   useEffect(() => {
     if (isOpen) {
-      setTimeout(() => inputRef.current?.focus(), 100);
       setQuery("");
       setDebouncedQuery("");
+      setActiveIdx(-1);
+      setTimeout(() => inputRef.current?.focus(), 80);
     }
   }, [isOpen]);
 
+  // Keyboard: Escape closes, arrows navigate
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query), 300);
-    return () => clearTimeout(timer);
-  }, [query]);
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape") { onClose(); return; }
+      if (e.key === "ArrowDown") { setActiveIdx(i => i + 1); e.preventDefault(); }
+      if (e.key === "ArrowUp")  { setActiveIdx(i => Math.max(-1, i - 1)); e.preventDefault(); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isOpen, onClose]);
 
-  const { data: searchResults, isLoading } = useSearchShows(debouncedQuery);
-  const filtered = searchResults || [];
+  // Click outside closes
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    // slight delay so the trigger button click doesn't immediately re-close
+    const id = setTimeout(() => document.addEventListener("mousedown", handler), 50);
+    return () => { clearTimeout(id); document.removeEventListener("mousedown", handler); };
+  }, [isOpen, onClose]);
+
+  const { data: searchResults, isLoading } = useSearchShows(debouncedQuery, city);
+  const results = searchResults || [];
+
+  const navigate = useCallback((show: Show) => {
+    const id = show.id || show._id?.$oid;
+    if (!id) return;
+    onClose();
+    router.push(`/shows/${id}`);
+  }, [router, onClose]);
+
+  // Keyboard Enter on highlighted item
+  useEffect(() => {
+    if (!isOpen) return;
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Enter" && activeIdx >= 0 && results[activeIdx]) {
+        navigate(results[activeIdx]);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isOpen, activeIdx, results, navigate]);
+
+  const showDropdown = isOpen && query.length > 1;
 
   return (
     <AnimatePresence>
       {isOpen && (
-        <motion.div
-          initial={{ opacity: 0, backdropFilter: "blur(0px)" }}
-          animate={{ opacity: 1, backdropFilter: "blur(24px)" }}
-          exit={{ opacity: 0, backdropFilter: "blur(0px)" }}
-          className="fixed inset-0 z-[100] flex flex-col p-6 sm:p-12 bg-[#020617]/80"
-        >
-          {/* Close button */}
-          <button 
-            onClick={onClose} 
-            className="absolute top-8 right-8 p-3 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+        <>
+          {/* Backdrop — subtle, not full-screen cover */}
+          <motion.div
+            key="backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[98]"
+            style={{ background: "rgba(0,0,0,0.25)", backdropFilter: "blur(2px)" }}
+          />
+
+          {/* Search box — centred, max-w like Google */}
+          <div
+            className="fixed inset-x-0 top-0 z-[99] flex justify-center px-4"
+            style={{ paddingTop: "12px" }}
           >
-            <X size={24} />
-          </button>
-
-          {/* Search Input Container */}
-          <div className="w-full max-w-4xl mx-auto mt-8 sm:mt-16">
-            <motion.div 
-              initial={{ y: -20, opacity: 0 }}
-              animate={{ y: 0, opacity: 1 }}
-              transition={{ delay: 0.1 }}
-              className="relative"
+            <motion.div
+              ref={containerRef}
+              key="searchbox"
+              initial={{ opacity: 0, y: -10, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: -10, scale: 0.98 }}
+              transition={{ duration: 0.18, ease: "easeOut" }}
+              style={{ width: "100%", maxWidth: "640px" }}
             >
-              <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-[var(--accent)] w-6 h-6 sm:w-7 sm:h-7" />
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search films, concerts, events..."
-                className="w-full py-4 sm:py-5 pl-16 pr-6 text-xl sm:text-2xl bg-white/5 border border-white/10 rounded-2xl text-white placeholder-white/30 focus:outline-none focus:border-[var(--accent)] focus:ring-4 focus:ring-[var(--accent)]/20 transition-all font-display"
-              />
-            </motion.div>
+              {/* Input row */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  background: "var(--card-bg, #1e293b)",
+                  border: "1.5px solid var(--accent, #6366f1)",
+                  borderRadius: showDropdown ? "16px 16px 0 0" : "16px",
+                  padding: "10px 16px",
+                  gap: "10px",
+                  boxShadow: "0 8px 32px rgba(0,0,0,0.4), 0 0 0 4px rgba(99,102,241,0.12)",
+                  transition: "border-radius 0.15s",
+                }}
+              >
+                {isLoading && query.length > 1 ? (
+                  <Loader2 size={20} className="text-[var(--accent)] animate-spin shrink-0" />
+                ) : (
+                  <Search size={20} className="text-[var(--accent)] shrink-0" />
+                )}
 
-            {/* Results */}
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ delay: 0.2 }}
-              className="mt-12 overflow-y-auto max-h-[60vh] custom-scrollbar pb-12"
-            >
-              {query.length > 1 && (
-                <div className="mb-6 flex justify-between items-center text-white/50 text-sm tracking-wider font-bold uppercase">
-                  <span className="flex items-center gap-2">
-                    Results for "{query}"
-                    {isLoading && <span className="w-4 h-4 rounded-full border-2 border-[var(--accent)] border-t-transparent animate-spin inline-block" />}
-                  </span>
-                  <span>{filtered.length} matches</span>
+                <input
+                  ref={inputRef}
+                  value={query}
+                  onChange={e => { setQuery(e.target.value); setActiveIdx(-1); }}
+                  placeholder="Search movies, concerts, events…"
+                  style={{
+                    flex: 1,
+                    background: "transparent",
+                    border: "none",
+                    outline: "none",
+                    color: "var(--text-primary, #f8fafc)",
+                    fontSize: "16px",
+                    fontFamily: "inherit",
+                  }}
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+
+                <div style={{ flexShrink: 0, paddingLeft: 8, borderLeft: "1px solid var(--border)", display: "flex", alignItems: "center" }}>
+                  <CitySelector selectedCity={city} onSelect={setCity} />
                 </div>
-              )}
-              
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                {query.length > 1 && filtered.map((show, idx) => (
-                  <motion.div
-                    key={typeof show.id === "string" ? show.id : (show as any)._id?.$oid}
-                    initial={{ opacity: 0, y: 10 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: 0.05 * idx }}
-                    onClick={() => {
-                      onSelectShow(show);
-                      onClose();
+
+                {query && (
+                  <button
+                    onClick={() => { setQuery(""); setDebouncedQuery(""); inputRef.current?.focus(); }}
+                    style={{
+                      background: "var(--bg-subtle, rgba(255,255,255,0.06))",
+                      border: "none",
+                      borderRadius: "50%",
+                      width: 28, height: 28,
+                      display: "flex", alignItems: "center", justifyContent: "center",
+                      cursor: "pointer", color: "var(--text-muted)",
+                      flexShrink: 0,
                     }}
-                    className="flex items-center gap-4 p-4 rounded-2xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-[var(--accent)]/50 cursor-pointer transition-all group"
                   >
-                    <img 
-                      src={show.thumbnail_url || show.poster_url || '/placeholder.jpg'} 
-                      alt={show.title} 
-                      className="w-16 h-20 rounded-xl object-cover shadow-lg group-hover:scale-105 transition-transform"
-                    />
-                    <div className="flex flex-col">
-                      <span className="text-white font-bold text-lg leading-tight line-clamp-2">{show.title}</span>
-                      <span className="text-[var(--accent)] text-sm font-semibold mt-1">{show.show_type}</span>
-                    </div>
-                  </motion.div>
-                ))}
+                    <X size={14} />
+                  </button>
+                )}
+
+                <button
+                  onClick={onClose}
+                  style={{
+                    background: "transparent",
+                    border: "none",
+                    color: "var(--text-muted)",
+                    cursor: "pointer",
+                    fontSize: "13px",
+                    padding: "2px 6px",
+                    borderRadius: "6px",
+                    flexShrink: 0,
+                    fontFamily: "inherit",
+                  }}
+                >
+                  Esc
+                </button>
               </div>
-              
-              {query.length > 1 && filtered.length === 0 && !isLoading && (
-                <div className="text-center text-white/40 mt-20 text-lg font-medium">
-                  No matches found. Try another keyword.
-                </div>
-              )}
+
+              {/* Dropdown results */}
+              <AnimatePresence>
+                {showDropdown && (
+                  <motion.div
+                    key="dropdown"
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: "auto" }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.18 }}
+                    style={{
+                      background: "var(--card-bg, #1e293b)",
+                      border: "1.5px solid var(--accent, #6366f1)",
+                      borderTop: "1px solid var(--border, rgba(255,255,255,0.08))",
+                      borderRadius: "0 0 16px 16px",
+                      overflow: "hidden",
+                      boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
+                    }}
+                  >
+                    {/* Loading skeleton */}
+                    {isLoading && (
+                      <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                        {[1, 2, 3].map(i => (
+                          <div key={i} style={{ display: "flex", gap: 12, alignItems: "center" }}>
+                            <div style={{ width: 40, height: 52, borderRadius: 8, background: "var(--bg-subtle)", animation: "pulse 1.5s infinite" }} />
+                            <div style={{ flex: 1 }}>
+                              <div style={{ height: 14, borderRadius: 6, background: "var(--bg-subtle)", marginBottom: 8, width: "60%", animation: "pulse 1.5s infinite" }} />
+                              <div style={{ height: 11, borderRadius: 6, background: "var(--bg-subtle)", width: "35%", animation: "pulse 1.5s infinite" }} />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Results list */}
+                    {!isLoading && results.length > 0 && (
+                      <ul style={{ listStyle: "none", margin: 0, padding: "6px 0" }}>
+                        {results.map((show, idx) => {
+                          const id = show.id || show._id?.$oid;
+                          const isActive = idx === activeIdx;
+                          return (
+                            <motion.li
+                              key={id}
+                              initial={{ opacity: 0, x: -6 }}
+                              animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: idx * 0.04 }}
+                              onClick={() => navigate(show)}
+                              onMouseEnter={() => setActiveIdx(idx)}
+                              style={{
+                                display: "flex",
+                                alignItems: "center",
+                                gap: "12px",
+                                padding: "10px 16px",
+                                cursor: "pointer",
+                                background: isActive
+                                  ? "var(--bg-subtle, rgba(255,255,255,0.05))"
+                                  : "transparent",
+                                transition: "background 0.1s",
+                              }}
+                            >
+                              {/* Thumbnail */}
+                              <div style={{ flexShrink: 0, width: 40, height: 52, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
+                                {show.poster_url || show.thumbnail_url ? (
+                                  <img
+                                    src={show.poster_url || show.thumbnail_url}
+                                    alt={show.title}
+                                    style={{ width: "100%", height: "100%", objectFit: "cover" }}
+                                  />
+                                ) : (
+                                  <div style={{
+                                    width: "100%", height: "100%", display: "flex", alignItems: "center",
+                                    justifyContent: "center", fontSize: 20,
+                                    background: TYPE_COLORS[show.show_type] || "var(--bg-subtle)",
+                                  }}>
+                                    {TYPE_EMOJI[show.show_type] || "🎭"}
+                                  </div>
+                                )}
+                              </div>
+
+                              {/* Text */}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+                                <div style={{
+                                  fontWeight: 600,
+                                  fontSize: "14px",
+                                  color: "var(--text-primary)",
+                                  whiteSpace: "nowrap",
+                                  overflow: "hidden",
+                                  textOverflow: "ellipsis",
+                                }}>
+                                  {show.title}
+                                </div>
+                                <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+                                  <span style={{
+                                    fontSize: "11px",
+                                    fontWeight: 600,
+                                    padding: "2px 8px",
+                                    borderRadius: 99,
+                                    background: TYPE_COLORS[show.show_type] || "rgba(255,255,255,0.08)",
+                                    color: TYPE_TEXT[show.show_type] || "var(--text-secondary)",
+                                  }}>
+                                    {TYPE_EMOJI[show.show_type]} {show.show_type}
+                                  </span>
+                                  {show.venue && (
+                                    <span style={{ fontSize: "11px", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 3, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                                      <MapPin size={10} /> {show.venue}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Arrow */}
+                              <ArrowRight
+                                size={16}
+                                style={{
+                                  color: isActive ? "var(--accent)" : "var(--text-muted)",
+                                  flexShrink: 0,
+                                  transition: "color 0.1s, transform 0.1s",
+                                  transform: isActive ? "translateX(2px)" : "none",
+                                }}
+                              />
+                            </motion.li>
+                          );
+                        })}
+                      </ul>
+                    )}
+
+                    {/* Empty */}
+                    {!isLoading && results.length === 0 && (
+                      <div style={{
+                        padding: "28px 16px",
+                        textAlign: "center",
+                        color: "var(--text-muted)",
+                        fontSize: "14px",
+                      }}>
+                        <div style={{ fontSize: 32, marginBottom: 8 }}>🔍</div>
+                        No results for <strong style={{ color: "var(--text-secondary)" }}>"{query}"</strong>
+                      </div>
+                    )}
+
+                    {/* Footer hint */}
+                    {!isLoading && results.length > 0 && (
+                      <div style={{
+                        borderTop: "1px solid var(--border)",
+                        padding: "8px 16px",
+                        display: "flex",
+                        gap: 12,
+                        fontSize: "11px",
+                        color: "var(--text-muted)",
+                      }}>
+                        <span>↑↓ navigate</span>
+                        <span>↵ open</span>
+                        <span>Esc close</span>
+                        <span style={{ marginLeft: "auto" }}>{results.length} result{results.length !== 1 ? "s" : ""}</span>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </motion.div>
           </div>
-        </motion.div>
+        </>
       )}
     </AnimatePresence>
   );

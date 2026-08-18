@@ -8,7 +8,9 @@ import type { ScheduleV2, ScheduleSeat } from "@/types/schedule";
 import { motion } from "framer-motion";
 import { useTheme } from "next-themes";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082";
+import Script from "next/script";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 export default function CheckoutPage() {
   return (
@@ -35,6 +37,7 @@ function CheckoutPageContent() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [bookingSuccess, setBookingSuccess] = useState(false);
+  const [isPaying, setIsPaying] = useState(false);
   
   // 5 Minute countdown
   const [timeLeft, setTimeLeft] = useState(300);
@@ -66,8 +69,8 @@ function CheckoutPageContent() {
           throw new Error("Some seats could not be found");
         }
         setLockedSeats(locked);
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        setError((err instanceof Error ? err.message : String(err)));
       } finally {
         setLoading(false);
       }
@@ -106,31 +109,129 @@ function CheckoutPageContent() {
       router.push(`/login?redirect=/checkout?scheduleId=${scheduleId}&seats=${seatsStr}`);
       return;
     }
+    setIsPaying(true);
 
     try {
-      const res = await fetch(`${API_URL}/api/user/tickets`, {
+      if (!(window as any).Razorpay) {
+        alert("Razorpay SDK failed to load. Are you online?");
+        return;
+      }
+
+      const orderRes = await fetch(`${API_URL}/api/user/payments/razorpay-order`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
+        body: JSON.stringify({ 
           schedule_id: scheduleId,
-          seat_ids: seatIds
+          seat_ids: seatIds,
+          amount_paise: Math.round(total * 100) 
         })
       });
-      if (!res.ok) {
-        throw new Error("Failed to book tickets");
+      if (!orderRes.ok) {
+        if (orderRes.status === 503) {
+          throw new Error("Service is currently busy (Circuit Breaker). Please try again in a few moments.");
+        }
+        let errorMsg = "Failed to initialize payment";
+        try {
+          const errData = await orderRes.json();
+          if (errData.error) errorMsg = errData.error;
+        } catch (e) {}
+        throw new Error(errorMsg);
       }
-      // Save booked seat IDs to localStorage so SeatMap shows them as Green (Booked by You)
-      try {
-        const key = `my_booked_seats_${scheduleId}`;
-        const prev: number[] = JSON.parse(localStorage.getItem(key) || "[]");
-        const next = Array.from(new Set([...prev, ...seatIds]));
-        localStorage.setItem(key, JSON.stringify(next));
-      } catch (e) {
-        console.error("Failed to save booked seats to localStorage", e);
+      const orderData = await orderRes.json();
+
+      if (orderData.order_id.startsWith("order_mock_")) {
+        try {
+          const confirmRes = await fetch(`${API_URL}/api/user/payments`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              schedule_id: scheduleId,
+              seat_ids: seatIds,
+              idempotency_key: `checkout_${scheduleId}_${Date.now()}`,
+              razorpay_order_id: orderData.order_id,
+              razorpay_payment_id: "pay_mock_payment",
+              razorpay_signature: "mock_signature"
+            })
+          });
+          if (!confirmRes.ok) {
+            if (confirmRes.status === 503) {
+              throw new Error("Service is currently busy (Circuit Breaker). Please try again in a few moments.");
+            }
+            throw new Error("Failed to confirm mock booking on server");
+          }
+          
+          try {
+            const key = `my_booked_seats_${scheduleId}`;
+            const prev: number[] = JSON.parse(localStorage.getItem(key) || "[]");
+            const next = Array.from(new Set([...prev, ...seatIds]));
+            localStorage.setItem(key, JSON.stringify(next));
+          } catch (e) {
+            console.error(e);
+          }
+          setBookingSuccess(true);
+        } catch (err: any) {
+          alert("Mock Booking error: " + err.message);
+        }
+        return;
       }
-      setBookingSuccess(true);
-    } catch (err: any) {
-      alert("Payment failed: " + err.message);
+
+      const options = {
+        key: process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID || "rzp_test_mock", 
+        amount: Math.round(total * 100),
+        currency: "INR",
+        name: "BookIt",
+        description: "Ticket Booking",
+        order_id: orderData.order_id,
+        handler: async function (response: any) {
+          try {
+            const confirmRes = await fetch(`${API_URL}/api/user/payments`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({
+                schedule_id: scheduleId,
+                seat_ids: seatIds,
+                idempotency_key: `checkout_${scheduleId}_${Date.now()}`,
+                razorpay_order_id: response.razorpay_order_id,
+                razorpay_payment_id: response.razorpay_payment_id,
+                razorpay_signature: response.razorpay_signature
+              })
+            });
+            if (!confirmRes.ok) {
+              if (confirmRes.status === 503) {
+                throw new Error("Service is currently busy (Circuit Breaker). Please try again in a few moments.");
+              }
+              throw new Error("Failed to confirm booking on server");
+            }
+            
+            try {
+              const key = `my_booked_seats_${scheduleId}`;
+              const prev: number[] = JSON.parse(localStorage.getItem(key) || "[]");
+              const next = Array.from(new Set([...prev, ...seatIds]));
+              localStorage.setItem(key, JSON.stringify(next));
+            } catch (e) {
+              console.error(e);
+            }
+            setIsPaying(false);
+            setBookingSuccess(true);
+          } catch (err: any) {
+            setIsPaying(false);
+            alert("Booking error: " + err.message);
+          }
+        },
+        theme: {
+          color: "#10B981"
+        }
+      };
+
+      const rzp = new (window as any).Razorpay(options);
+      rzp.on("payment.failed", function (response: any) {
+        setIsPaying(false);
+        alert("Payment Failed: " + response.error.description);
+      });
+      rzp.open();
+    } catch (err: unknown) {
+      setIsPaying(false);
+      alert("Payment error: " + (err instanceof Error ? err.message : String(err)));
     }
   };
 
@@ -168,34 +269,31 @@ function CheckoutPageContent() {
     
     return (
       <div 
-        className="min-h-screen flex items-center justify-center p-6 text-[var(--text-primary)]"
+        className="min-h-screen flex items-center justify-center p-6 text-slate-900 dark:text-white"
         style={{ background: dark ? 'var(--bg)' : 'linear-gradient(135deg, #f3f4f6 0%, #e0e7ff 50%, #f3e8ff 100%)' }}
       >
         <motion.div 
           initial={{ scale: 0.9, opacity: 0, y: 20 }}
           animate={{ scale: 1, opacity: 1, y: 0 }}
-          className="max-w-md w-full bg-white dark:bg-[rgba(15,23,42,0.8)] backdrop-blur-xl p-8 rounded-3xl border border-[var(--border)] text-center shadow-2xl relative overflow-hidden"
+          className="max-w-md w-full bg-white dark:bg-[rgba(15,23,42,0.8)] backdrop-blur-xl p-8 rounded-3xl border border-slate-200 dark:border-slate-700 text-center shadow-2xl relative overflow-hidden"
         >
           {/* Ticket styling top edge */}
           <div className="absolute top-0 left-0 right-0 h-4 bg-emerald-500 flex justify-between px-4">
-            {Array.from({length: 12}).map((_, i) => (
-              <div key={i} className="w-2 h-2 rounded-full bg-white dark:bg-[#0f172a] mt-[-4px]" />
-            ))}
           </div>
 
           <div className="w-20 h-20 bg-emerald-500/20 rounded-full mx-auto flex items-center justify-center mt-6 mb-4">
             <Check className="w-10 h-10 text-emerald-500" />
           </div>
-          <h2 className="text-3xl font-black font-display mb-1 text-[var(--text-primary)]">Payment Successful!</h2>
-          <p className="text-[var(--text-secondary)] mb-6 font-medium text-sm">Your e-ticket is ready.</p>
+          <h2 className="text-3xl font-black font-display mb-1 text-slate-900 dark:text-white">Payment Successful!</h2>
+          <p className="text-slate-500 dark:text-slate-400 mb-6 font-medium text-sm">Your e-ticket is ready.</p>
           
-          <div className="bg-slate-50 dark:bg-slate-900/50 rounded-2xl p-6 border border-[var(--border)] text-left mb-6 relative">
+          <div className="bg-slate-100 dark:bg-slate-800 rounded-2xl p-6 border border-slate-200 dark:border-slate-700 text-left mb-6 relative">
             <h3 className="font-bold text-lg mb-1">{show?.title}</h3>
-            <div className="flex gap-4 text-xs text-[var(--text-secondary)] mb-4">
+            <div className="flex gap-4 text-xs text-slate-500 dark:text-slate-400 mb-4">
               <span className="flex items-center gap-1"><Calendar size={12}/> {date.toLocaleDateString()}</span>
               <span className="flex items-center gap-1"><Clock size={12}/> {date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
-            <div className="flex items-center gap-2 text-sm font-medium mb-4 pb-4 border-b border-[var(--border)]">
+            <div className="flex items-center gap-2 text-sm font-medium mb-4 pb-4 border-b border-slate-200 dark:border-slate-700">
               <MapPin size={14} className="text-emerald-500"/>
               {schedule.venue_name}
             </div>
@@ -233,6 +331,7 @@ function CheckoutPageContent() {
       className="min-h-screen w-full text-[var(--text-primary)] font-sans relative"
       style={{ background: dark ? 'var(--bg)' : 'linear-gradient(135deg, #f3f4f6 0%, #e0e7ff 50%, #f3e8ff 100%)' }}
     >
+      <Script src="https://checkout.razorpay.com/v1/checkout.js" strategy="lazyOnload" />
       <div className="fixed inset-0 pointer-events-none z-0 bg-grid-pattern opacity-5" />
       
       <div className="relative z-10 px-6 py-8 max-w-[1200px] mx-auto">
@@ -249,7 +348,7 @@ function CheckoutPageContent() {
         </div>
 
         {/* Prominent 5-Minute Lock Countdown Banner */}
-        <div className="w-full mb-8 bg-amber-500/15 border-2 border-amber-500/30 text-amber-900 dark:text-amber-200 p-4 rounded-2xl flex items-center justify-between shadow-sm">
+        <div className="w-full mb-8 bg-gray-200 border-2 border-gray-300 text-black dark:bg-gray-800 dark:border-gray-700 dark:text-white p-4 rounded-2xl flex items-center justify-between shadow-sm">
           <div className="flex items-center gap-3">
             <span className="text-xl">🔒</span>
             <div>
@@ -261,7 +360,7 @@ function CheckoutPageContent() {
               </p>
             </div>
           </div>
-          <div className="hidden sm:flex items-center gap-2 bg-amber-500 text-white font-mono font-black text-sm px-3.5 py-1.5 rounded-xl shadow-inner">
+          <div className="hidden sm:flex items-center gap-2 bg-gray-300 text-black dark:bg-gray-700 dark:text-white font-mono font-black text-sm px-3.5 py-1.5 rounded-xl shadow-inner">
             <Clock size={16} />
             {formatTime(timeLeft)}
           </div>
@@ -305,9 +404,9 @@ function CheckoutPageContent() {
                 <h3 className="font-bold mb-4 flex items-center gap-2"><Ticket size={18} className="text-indigo-500"/> Selected Seats</h3>
                 <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                   {lockedSeats.map(s => (
-                    <div key={s.id} className="bg-white/50 dark:bg-slate-900/50 p-3 rounded-xl border border-[var(--border)] flex flex-col">
+                    <div key={s.id} className="bg-slate-100 dark:bg-slate-800 p-3 rounded-xl border border-[var(--border)] flex flex-col text-slate-900 dark:text-white">
                       <span className="font-bold">{s.row_letter}{s.seat_number}</span>
-                      <span className="text-[10px] uppercase font-bold text-[var(--text-muted)] tracking-widest">{s.seat_class}</span>
+                      <span className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400 tracking-widest">{s.seat_class}</span>
                     </div>
                   ))}
                 </div>
@@ -338,10 +437,15 @@ function CheckoutPageContent() {
 
               <button
                 onClick={handlePay}
-                className="w-full py-4 bg-[var(--text-primary)] text-[var(--bg)] font-bold rounded-2xl hover:opacity-90 transition-all flex items-center justify-center gap-2 shadow-lg hover:-translate-y-1"
+                disabled={isPaying}
+                className="w-full py-4 bg-[var(--text-primary)] text-[var(--bg)] font-bold rounded-2xl hover:opacity-90 transition-all flex items-center justify-center gap-2 shadow-lg hover:-translate-y-1 disabled:opacity-70 disabled:cursor-not-allowed disabled:hover:translate-y-0"
               >
-                <CreditCard size={18} />
-                Pay ₹{total.toFixed(2)}
+                {isPaying ? (
+                  <div className="w-5 h-5 border-2 border-[var(--bg)] border-t-transparent rounded-full animate-spin" />
+                ) : (
+                  <CreditCard size={18} />
+                )}
+                {isPaying ? "Processing..." : `Pay ₹${total.toFixed(2)}`}
               </button>
               
               <p className="text-center text-[10px] text-[var(--text-muted)] mt-4 flex items-center justify-center gap-1">
@@ -356,9 +460,9 @@ function CheckoutPageContent() {
   );
 }
 
-function Lock(props: any) {
+function Lock({ size = 24, ...props }: { size?: number | string } & React.SVGProps<SVGSVGElement>) {
   return (
-    <svg {...props} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="3" y="11" width="18" height="11" rx="2" ry="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path></svg>
   );
 }
 

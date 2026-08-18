@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { motion } from "framer-motion";
 import type { SeatItem, SeatTier, SeatToggleStatus } from "./types";
 
 interface SeatButtonProps {
@@ -33,11 +34,11 @@ export function SeatButton({ seat, tier, picked, onToggleSeat }: SeatButtonProps
   } else if (isMyLocked) {
     seatCls += "seat-selected";
     seatStyle = {
-      background: "#10B981",
-      color: "#ffffff",
-      border: "2px solid #059669",
+      background: "#FEF08A",
+      color: "#854D0E",
+      border: "2px solid #EAB308",
       cursor: "pointer",
-      boxShadow: "0 0 10px rgba(16, 185, 129, 0.4)",
+      boxShadow: "0 0 10px rgba(234, 179, 8, 0.4)",
     };
     disabled = false;
   } else if (isBookedOther) {
@@ -81,7 +82,7 @@ export function SeatButton({ seat, tier, picked, onToggleSeat }: SeatButtonProps
       : "available";
 
   return (
-    <button
+    <motion.button
       key={seat.id}
       type="button"
       className={seatCls}
@@ -99,8 +100,13 @@ export function SeatButton({ seat, tier, picked, onToggleSeat }: SeatButtonProps
           ? "Processing Lock / 5 Min Hold"
           : seat.label
       }
+      initial={{ scale: 0.8, opacity: 0 }}
+      animate={{ scale: 1, opacity: 1 }}
+      whileHover={disabled ? undefined : { scale: 1.1, zIndex: 10 }}
+      whileTap={disabled ? undefined : { scale: 0.95 }}
+      transition={{ type: "spring", stiffness: 300, damping: 20 }}
     >
-      {seat.col}
-    </button>
+      {seat.label}
+    </motion.button>
   );
 }

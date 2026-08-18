@@ -186,7 +186,7 @@ export default function ShowForm({ initial, token, onSubmit, onCancel, isLoading
   const [availableCities, setAvailableCities] = useState<string[]>(INDIAN_CITIES);
 
   useEffect(() => {
-    const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082";
+    const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
     Promise.all([
       fetch(`${api}/api/user/cities`).then(r => r.ok ? r.json() : []).catch(() => []),
       fetch(`${api}/api/admin/cities`).then(r => r.ok ? r.json() : []).catch(() => []),

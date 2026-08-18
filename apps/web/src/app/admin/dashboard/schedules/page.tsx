@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import type { Show, SeatLayout, ScheduleV2, ShowType, LayoutSeatClass } from "@/types";
 import { Pagination, usePagination } from "../components/Pagination";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8082";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 const TYPE_ICONS: Record<string, string> = {
   Movie: "🎬", Concert: "🎵", Event: "🎪", GameEvent: "🏟️",

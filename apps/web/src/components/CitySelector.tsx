@@ -76,13 +76,13 @@ export function CitySelector({ selectedCity, onSelect }: CitySelectorProps) {
               >
                 {/* Header */}
                 <div className="p-4 sm:p-6 border-b border-[var(--divider)] flex items-center justify-between">
-                  <h3 className="text-xl font-bold font-display flex items-center gap-2 text-black dark:text-white">
+                  <h3 className="text-xl font-bold font-display flex items-center gap-2 text-[var(--text-primary)]">
                     <MapPin className="w-6 h-6 text-[var(--accent)]" />
                     {searchQuery || showAll ? "Select your City" : "Popular Cities"}
                   </h3>
                   <button
                     onClick={() => setIsOpen(false)}
-                    className="p-2 hover:bg-gray-200 dark:hover:bg-white/10 rounded-full transition-colors text-black dark:text-white"
+                    className="p-2 hover:bg-[var(--bg-subtle)] rounded-full transition-colors text-[var(--text-primary)]"
                   >
                     <X className="w-5 h-5" />
                   </button>
@@ -99,7 +99,7 @@ export function CitySelector({ selectedCity, onSelect }: CitySelectorProps) {
                       placeholder="Search for your city..."
                       value={searchQuery}
                       onChange={e => setSearchQuery(e.target.value)}
-                      className="w-full pl-10 pr-4 py-2.5 bg-white dark:bg-gray-900 border border-[var(--border)] rounded-xl focus:border-[var(--accent)] outline-none transition-colors text-black dark:text-white placeholder-gray-500 dark:placeholder-[var(--text-muted)] font-medium text-sm shadow-sm"
+                      className="w-full pl-10 pr-4 py-2.5 bg-[var(--bg-subtle)] border border-[var(--border)] rounded-xl focus:border-[var(--accent)] outline-none transition-colors text-[var(--text-primary)] placeholder-[var(--text-muted)] font-medium text-sm shadow-sm"
                     />
                   </div>
                 </div>
@@ -126,8 +126,8 @@ export function CitySelector({ selectedCity, onSelect }: CitySelectorProps) {
                                     setIsOpen(false);
                                   }}
                                   className={`flex flex-col items-center justify-center p-4 rounded-xl border transition-all ${isSelected
-                                      ? 'bg-[var(--accent-bg)] border-[var(--accent)] text-[var(--accent-text)] shadow-md'
-                                      : 'bg-[var(--bg-subtle)] border-[var(--border)] hover:border-[var(--accent)]/50 hover:shadow-lg hover:-translate-y-0.5 text-[var(--text-primary)] hover:text-[var(--accent)]'
+                                    ? 'bg-[var(--accent-bg)] border-[var(--accent)] text-[var(--accent-text)] shadow-md'
+                                    : 'bg-[var(--bg-subtle)] border-[var(--border)] hover:border-[var(--accent)]/50 hover:shadow-lg hover:-translate-y-0.5 text-[var(--text-primary)] hover:text-[var(--accent)]'
                                     }`}
                                 >
                                   <Icon className={`w-8 h-8 mb-3 drop-shadow-md ${isSelected ? 'text-[var(--accent)]' : 'opacity-80'}`} />
@@ -160,8 +160,8 @@ export function CitySelector({ selectedCity, onSelect }: CitySelectorProps) {
                                     setIsOpen(false);
                                   }}
                                   className={`text-left px-4 py-3 rounded-lg border transition-all text-sm font-medium ${selectedCity.toLowerCase() === city.toLowerCase()
-                                      ? 'bg-[var(--accent-bg)] border-[var(--accent)] text-[var(--accent-text)]'
-                                      : 'bg-[var(--bg-subtle)] border-[var(--border)] hover:border-[var(--accent)]/50 hover:bg-[var(--bg-raised)] text-[var(--text-primary)] hover:text-[var(--accent)]'
+                                    ? 'bg-[var(--accent-bg)] border-[var(--accent)] text-[var(--accent-text)]'
+                                    : 'bg-[var(--bg-subtle)] border-[var(--border)] hover:border-[var(--accent)]/50 hover:bg-[var(--bg-raised)] text-[var(--text-primary)] hover:text-[var(--accent)]'
                                     }`}
                                 >
                                   {city}

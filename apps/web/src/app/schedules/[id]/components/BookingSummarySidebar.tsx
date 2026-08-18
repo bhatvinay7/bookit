@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useRef, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export interface SummarySeat {
@@ -14,7 +14,9 @@ interface BookingSummarySidebarProps {
   summarySeats: SummarySeat[];
   totalPrice: number;
   pickedCount: number;
+  unlockedPickedCount: number;
   isLocking: boolean;
+  isRouting: boolean;
   hasLockedSeats: boolean;
   onCheckout: () => void;
   onProceed: () => void;
@@ -25,12 +27,26 @@ export function BookingSummarySidebar({
   summarySeats,
   totalPrice,
   pickedCount,
+  unlockedPickedCount,
   isLocking,
+  isRouting,
   hasLockedSeats,
   onCheckout,
   onProceed,
   onRemoveSeat,
 }: BookingSummarySidebarProps) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (scrollRef.current) {
+      setTimeout(() => {
+        if (scrollRef.current) {
+          scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+        }
+      }, 50); // Small delay to let framer-motion animations mount
+    }
+  }, [summarySeats.length]);
+
   return (
     <div className="w-full lg:w-[360px] shrink-0 flex flex-col gap-6">
       <div className="glass card-shadow rounded-3xl p-6 flex flex-col max-h-[80vh] sticky top-8">
@@ -41,7 +57,7 @@ export function BookingSummarySidebar({
           Select your preferred seats
         </p>
 
-        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 min-h-[200px]">
+        <div ref={scrollRef} className="flex-1 overflow-y-auto custom-scrollbar pr-2 min-h-[200px] scroll-smooth">
           <AnimatePresence>
             {summarySeats.length === 0 ? (
               <motion.div
@@ -109,15 +125,23 @@ export function BookingSummarySidebar({
           )}
 
           <button
-            onClick={hasLockedSeats ? onProceed : onCheckout}
-            disabled={(pickedCount === 0 && !hasLockedSeats) || isLocking}
+            onClick={unlockedPickedCount > 0 ? onCheckout : (hasLockedSeats ? onProceed : onCheckout)}
+            disabled={(pickedCount === 0 && !hasLockedSeats) || isLocking || isRouting}
             className={`w-full py-3.5 rounded-xl text-sm font-bold transition-all shadow-md ${
               pickedCount > 0 || hasLockedSeats
                 ? "btn-primary"
                 : "bg-slate-200 dark:bg-slate-800 text-slate-400 cursor-not-allowed border-none shadow-none"
             }`}
           >
-            {isLocking ? "Locking..." : hasLockedSeats ? "Proceed to Checkout" : "Secure Tickets"}
+            {isRouting 
+              ? "Redirecting..." 
+              : isLocking 
+                ? "Locking..." 
+                : (unlockedPickedCount > 0 
+                    ? "Secure Tickets" 
+                    : (hasLockedSeats 
+                        ? "Proceed to Checkout" 
+                        : "Secure Tickets"))}
           </button>
         </div>
       </div>

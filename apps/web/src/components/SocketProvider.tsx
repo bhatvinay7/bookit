@@ -1,28 +1,32 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState, useRef, useCallback } from "react";
+import { usePathname } from "next/navigation";
 
 interface SocketContextType {
   socket: WebSocket | null;
   isConnected: boolean;
   subscribe: (showtimeId: number) => void;
   unsubscribe: (showtimeId: number) => void;
-  lockSeats: (showtimeId: number, seatIds: number[]) => void;
+  lockSeats: (showtimeId: number, seatIds: number[]) => boolean;
   unlockSeats: (showtimeId: number, seatIds: number[]) => void;
   syncLocks: (showtimeId: number) => void;
-  lastMessage: any;
+  lastMessage: unknown;
   tokenExpired: boolean;
   tokenError: string | null;
+  wsUserId: number | null;
 }
 
 const SocketContext = createContext<SocketContextType | null>(null);
 
 export function SocketProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const [socket, setSocket] = useState<WebSocket | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [lastMessage, setLastMessage] = useState<any>(null);
   const [tokenExpired, setTokenExpired] = useState(false);
   const [tokenError, setTokenError] = useState<string | null>(null);
+  const [wsUserId, setWsUserId] = useState<number | null>(null);
   const reconnectTimeout = useRef<NodeJS.Timeout | undefined>(undefined);
 
   const connect = useCallback(() => {
@@ -63,6 +67,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        if (data.event === "auth_ack") {
+          setWsUserId(data.user_id);
+        }
         setLastMessage(data);
       } catch (e) {
         console.error("Failed to parse WS msg", e);
@@ -85,15 +92,29 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    connect();
+    const isBookingRoute = pathname?.match(/^\/(shows|schedules|dashboard|checkout)/);
+
+    if (!isBookingRoute) {
+      if (socket) {
+        socket.close();
+        setSocket(null);
+        setIsConnected(false);
+      }
+      return;
+    }
+
+    if (!socket || socket.readyState === WebSocket.CLOSED) {
+      connect();
+    }
+
+    // We only want to clean up if we actually leave the booking routes, 
+    // or when the component unmounts. Closing on every pathname change 
+    // causes rapid disconnect/reconnects.
     return () => {
-      clearTimeout(reconnectTimeout.current);
-      setSocket((s) => {
-        s?.close();
-        return null;
-      });
+      // Intentionally NOT closing the socket here to persist across booking pages.
+      // The socket will be closed if the user navigates away from booking routes (handled above).
     };
-  }, [connect]);
+  }, [pathname]);
 
   const subscribe = useCallback((showtimeId: number) => {
     if (socket?.readyState === WebSocket.OPEN) {
@@ -110,7 +131,9 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   const lockSeats = useCallback((showtimeId: number, seatIds: number[]) => {
     if (socket?.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: "LockSeats", room_id: showtimeId, seat_ids: seatIds }));
+      return true;
     }
+    return false;
   }, [socket]);
 
   const unlockSeats = useCallback((showtimeId: number, seatIds: number[]) => {
@@ -126,7 +149,7 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
   }, [socket]);
 
   return (
-    <SocketContext.Provider value={{ socket, isConnected, subscribe, unsubscribe, lockSeats, unlockSeats, syncLocks, lastMessage, tokenExpired, tokenError }}>
+    <SocketContext.Provider value={{ socket, isConnected, subscribe, unsubscribe, lockSeats, unlockSeats, syncLocks, lastMessage, tokenExpired, tokenError, wsUserId }}>
       {tokenError && (
         <div style={{
           position: "fixed", top: 16, left: "50%", transform: "translateX(-50%)",

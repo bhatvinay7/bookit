@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { useSocket } from "@/components/SocketProvider";
 
-export function useSeatLocking(scheduleId: number) {
-  const { subscribe, unsubscribe, lockSeats, unlockSeats, syncLocks, lastMessage, socket, isConnected } = useSocket();
+export function useSeatLocking(scheduleId: number, onSuccess?: () => void) {
+  const { subscribe, unsubscribe, lockSeats, unlockSeats, syncLocks, lastMessage, socket, isConnected, wsUserId } = useSocket();
   const [lockedSeatIds, setLockedSeatIds] = useState<number[]>([]);
   
   // States specifically for our lock request
@@ -40,50 +40,57 @@ export function useSeatLocking(scheduleId: number) {
   useEffect(() => {
     if (!lastMessage) return;
 
-    // Someone else locked a seat — track it as externally locked
-    // (the server already excludes the locker from this broadcast)
-    if (lastMessage.event === "lock_slot" && lastMessage.seat_id) {
-      setLockedSeatIds(prev => [...new Set([...prev, lastMessage.seat_id])]);
-      setExternallyLockedSeats(prev => [...new Set([...prev, lastMessage.seat_id])]);
+    const msg = lastMessage as any;
+
+    // Someone locked a seat — track it.
+    if (msg.event === "seat_locked" && msg.seat_id) {
+      if (msg.user_id === wsUserId) {
+        setLockedSeatIds(prev => [...new Set([...prev, msg.seat_id])]);
+        setMyLockedSeats(prev => [...new Set([...prev, msg.seat_id])]);
+      } else {
+        setLockedSeatIds(prev => [...new Set([...prev, msg.seat_id])]);
+        setExternallyLockedSeats(prev => [...new Set([...prev, msg.seat_id])]);
+      }
     }
 
     // Someone booked a seat
-    if (lastMessage.event === "seat_booked" && lastMessage.seat_id) {
-      setBookedSeatIds(prev => [...new Set([...prev, lastMessage.seat_id])]);
-      setLockedSeatIds(prev => prev.filter(id => id !== lastMessage.seat_id));
-      setMyLockedSeats(prev => prev.filter(id => id !== lastMessage.seat_id));
+    if (msg.event === "seat_booked" && msg.seat_id) {
+      setBookedSeatIds(prev => [...new Set([...prev, msg.seat_id])]);
+      setLockedSeatIds(prev => prev.filter(id => id !== msg.seat_id));
+      setMyLockedSeats(prev => prev.filter(id => id !== msg.seat_id));
     }
 
     // Someone unlocked a seat
-    if ((lastMessage.event === "SeatUnlocked" || lastMessage.event === "unlock_slot") && lastMessage.seat_id) {
-      setLockedSeatIds(prev => prev.filter(id => id !== lastMessage.seat_id));
-      setMyLockedSeats(prev => prev.filter(id => id !== lastMessage.seat_id));
+    if (msg.event === "SeatUnlocked" || msg.event === "unlock_slot" || msg.event === "seat_unlocked") {
+      const ids: number[] = msg.seat_ids || (msg.seat_id ? [msg.seat_id] : []);
+      if (ids.length > 0) {
+        setLockedSeatIds(prev => prev.filter(id => !ids.includes(id)));
+        setMyLockedSeats(prev => prev.filter(id => !ids.includes(id)));
+      }
     }
 
     // Response to our LockSeats request
-    if (lastMessage.event === "lock_slots_response") {
+    if (msg.event === "lock_slots_response") {
       setIsLocking(false);
       
-      const locked: number[] = lastMessage.locked_seat_ids || [];
-      const failed: number[] = lastMessage.failed_seat_ids || [];
-      
-      if (locked.length > 0) {
-        setMyLockedSeats(locked);
-        // Also add them to the global locked state so UI updates
-        setLockedSeatIds(prev => [...new Set([...prev, ...locked])]);
-      }
+      const failed: number[] = msg.failed_seat_ids || [];
+      const success: boolean = msg.success;
       
       if (failed.length > 0) {
         setFailedSeats(failed);
         setShowDiscrepancyModal(true);
-      } else if (locked.length > 0) {
-        // 100% success, no failed seats
+      } else if (success && onSuccess) {
+        onSuccess();
       }
+      
+      // Always sync from the source of truth (zset) after a lock attempt
+      // Add a slight delay to ensure lock-server has processed the queue
+      setTimeout(() => syncLocks(scheduleId), 200);
     }
 
     // Response to our UnlockSeats request
-    if (lastMessage.event === "unlock_slots_response") {
-      const unlocked: number[] = lastMessage.unlocked_seat_ids || [];
+    if (msg.event === "unlock_slots_response") {
+      const unlocked: number[] = msg.unlocked_seat_ids || [];
       if (unlocked.length > 0) {
         setLockedSeatIds(prev => prev.filter(id => !unlocked.includes(id)));
         setMyLockedSeats(prev => prev.filter(id => !unlocked.includes(id)));
@@ -91,8 +98,8 @@ export function useSeatLocking(scheduleId: number) {
     }
 
     // Initial room snapshot from ws-server's Redis bitmap + zset state
-    if (lastMessage.event === "room_state_snapshot") {
-      const roomSeats = Array.isArray(lastMessage.seats) ? lastMessage.seats : [];
+    if (msg.event === "room_state_snapshot") {
+      const roomSeats = Array.isArray(msg.seats) ? msg.seats : [];
       
       const roomLockedSeats = roomSeats
         .filter((seat: { status?: string }) => (seat.status || "").toUpperCase() === "LOCKED")
@@ -102,7 +109,13 @@ export function useSeatLocking(scheduleId: number) {
         .filter((seat: { status?: string }) => (seat.status || "").toUpperCase() === "BOOKED")
         .map((seat: { seat_id: number }) => seat.seat_id);
 
-      const synced: number[] = Array.isArray(lastMessage.locked_seat_ids) ? lastMessage.locked_seat_ids : [];
+      const syncedObjects = Array.isArray(msg.locked_seat_ids) ? msg.locked_seat_ids : [];
+      const synced: number[] = syncedObjects.map((obj: { seatId?: number; seat_id?: number } | string | number) => {
+        if (typeof obj === 'object' && obj !== null) {
+          return Number(obj.seatId ?? obj.seat_id);
+        }
+        return Number(obj);
+      });
 
       setLockedSeatIds(roomLockedSeats);
       setBookedSeatIds(roomBookedSeats);
@@ -110,25 +123,38 @@ export function useSeatLocking(scheduleId: number) {
     }
 
     // Refresh response from ws-server's Redis-backed zset state
-    if (lastMessage.event === "sync_locks_response") {
-      const synced: number[] = lastMessage.locked_seat_ids || [];
+    if (msg.event === "sync_locks_response") {
+      const syncedObjects = Array.isArray(msg.locked_seat_ids) ? msg.locked_seat_ids : [];
+      const synced: number[] = syncedObjects.map((obj: { seatId?: number; seat_id?: number } | string | number) => {
+        if (typeof obj === 'object' && obj !== null) {
+          return Number(obj.seatId ?? obj.seat_id);
+        }
+        return Number(obj);
+      });
       setLockedSeatIds(prev => Array.from(new Set([...prev, ...synced])));
       setMyLockedSeats(synced);
     }
-  }, [lastMessage]);
+  }, [lastMessage, scheduleId, syncLocks, wsUserId]);
 
   const requestLock = useCallback((seatIds: number[]) => {
     if (seatIds.length === 0) return;
     setIsLocking(true);
-    setMyLockedSeats([]);
     setFailedSeats([]);
     setShowDiscrepancyModal(false);
-    lockSeats(scheduleId, seatIds);
+    const sent = lockSeats(scheduleId, seatIds);
+    if (!sent) {
+      setIsLocking(false);
+      alert("Connection offline. Please wait to reconnect.");
+    } else {
+      setTimeout(() => setIsLocking(false), 5000);
+    }
   }, [lockSeats, scheduleId]);
 
   const requestUnlock = useCallback((seatIds: number[]) => {
     if (seatIds.length === 0) return;
     unlockSeats(scheduleId, seatIds);
+    setMyLockedSeats((prev) => prev.filter((id) => !seatIds.includes(id)));
+    setLockedSeatIds((prev) => prev.filter((id) => !seatIds.includes(id)));
   }, [scheduleId, unlockSeats]);
 
   const closeDiscrepancyModal = useCallback(() => {

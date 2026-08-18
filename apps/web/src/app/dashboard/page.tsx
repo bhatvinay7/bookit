@@ -41,6 +41,18 @@ function DashboardContent() {
     }
   }, []);
 
+  // ⌘K / Ctrl+K → open search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setIsSearchOpen(true);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, []);
+
   const handleCitySelect = (city: string) => {
     setSelectedCity(city);
     sessionStorage.setItem("bookit_city", city);
@@ -107,7 +119,7 @@ function DashboardContent() {
         {/* ════ FULL WIDTH HEADER AREA (ALWAYS VISIBLE) ════ */}
         <div className="w-full z-50 bg-[var(--card-bg)]/80 backdrop-blur-xl border-b border-[var(--border)] sticky top-0 shrink-0">
           {/* TOP HEADER */}
-          <div className="max-w-[1400px] mx-auto px-6 md:px-12">
+          <div className="w-full lg:w-[90%] max-w-none mx-auto px-6 md:px-12">
             <div className="flex items-center justify-between w-full py-4 gap-8">
               <div className="flex items-center gap-4 shrink-0">
                 <h1 className="text-3xl font-black tracking-tighter" style={{ fontFamily: css('font-display') }}>
@@ -144,7 +156,7 @@ function DashboardContent() {
 
           {/* CATEGORY NAV (formerly SidebarStrip) */}
           <div className="bg-[var(--bg-subtle)]/50 border-t border-[var(--border)]">
-            <div className="max-w-[1400px] mx-auto px-6 md:px-12">
+            <div className="w-full lg:w-[90%] max-w-none mx-auto px-6 md:px-12">
               <SidebarStrip 
                 selectedCategory={selectedCategory} 
                 onSelectCategory={handleSelectCategory}
@@ -172,7 +184,7 @@ function DashboardContent() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
-              className="flex-1 flex flex-col pb-20 pt-8 px-6 md:px-12 max-w-[1400px] mx-auto w-full"
+              className="flex-1 flex flex-col pb-20 pt-8 px-6 md:px-12 w-full lg:w-[90%] max-w-none mx-auto"
             >
 
             {/* MOBILE SEARCH BAR TRIGGER */}

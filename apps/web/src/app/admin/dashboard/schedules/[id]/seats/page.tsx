@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import type { ScheduleV2, ScheduleSeat } from "@/types";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8082";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 export default function ScheduleSeatsEditorPage() {
   const { id } = useParams() as { id: string };
@@ -32,8 +32,8 @@ export default function ScheduleSeatsEditorPage() {
       if (!resSeats.ok) throw new Error("Failed to load seats");
       const seatData = await resSeats.json();
       setSeats(seatData);
-    } catch (err: any) {
-      setError(err.message);
+    } catch (err: unknown) {
+      setError((err instanceof Error ? err.message : String(err)));
     } finally {
       setLoading(false);
     }
@@ -84,8 +84,8 @@ export default function ScheduleSeatsEditorPage() {
       setBulkPrice("");
       setSelectedSeatIds(new Set());
       await load();
-    } catch (err: any) {
-      alert("Error: " + err.message);
+    } catch (err: unknown) {
+      alert("Error: " + (err instanceof Error ? err.message : String(err)));
     } finally {
       setSaving(false);
     }
