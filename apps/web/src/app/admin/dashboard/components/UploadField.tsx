@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8082";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 interface UploadFieldProps {
   label: string;

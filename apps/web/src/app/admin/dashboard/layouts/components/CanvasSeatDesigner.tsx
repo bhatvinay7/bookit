@@ -211,9 +211,9 @@ export default function CanvasSeatDesigner({ shape, initialSeats, onSave, onCanc
     setColEnd(colEnd + colsCount);
   };
 
-  const handleDragEnd = (e: any, id: string) => {
-    const newX = e.target.x();
-    const newY = e.target.y();
+  const handleDragEnd = (e: unknown, id: string) => {
+    const newX = (e as any).target.x();
+    const newY = (e as any).target.y();
     setBlocks(blocks.map(b => b.id === id ? { ...b, x: newX, y: newY } : b));
   };
 

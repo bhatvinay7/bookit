@@ -4,7 +4,7 @@ import { X, Calendar, Clock } from "lucide-react";
 import type { Show, ScheduleV2 } from "@/types";
 import { useRouter } from "next/navigation";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 interface ShowDetailModalProps {
   show: Show | null;

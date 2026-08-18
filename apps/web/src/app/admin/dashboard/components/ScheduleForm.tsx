@@ -7,7 +7,7 @@ import { format, parseISO } from "date-fns";
 
 import { useScheduleMovie } from "@/hooks/useApi"; // We will not use this hook anymore, we'll do raw fetch
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 export default function ScheduleForm({ token }: { token: string }) {
   const [shows, setShows] = useState<any[]>([]);
@@ -56,7 +56,7 @@ export default function ScheduleForm({ token }: { token: string }) {
           setLayoutSeats(data.seats);
           // Extract unique categories
           const uniqueCats = new Set<string>();
-          data.seats.forEach((s: any) => uniqueCats.add(s.seat_class));
+          data.seats.forEach((s: { seat_class: string }) => uniqueCats.add(s.seat_class));
           const newPrices: Record<string, string> = {};
           uniqueCats.forEach(cat => {
             newPrices[cat] = prices[cat] || "20.00"; // preserve old if exists, else default 20
@@ -107,8 +107,8 @@ export default function ScheduleForm({ token }: { token: string }) {
       setSelectedLayoutId("");
       setSDate(null);
       setBDate(null);
-    } catch (err: any) {
-      alert(`Failed to generate schedule: ${err.message}`);
+    } catch (err: unknown) {
+      alert(`Failed to generate schedule: ${(err instanceof Error ? err.message : String(err))}`);
     } finally {
       setLoading(false);
     }

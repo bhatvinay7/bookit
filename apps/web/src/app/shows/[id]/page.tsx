@@ -9,17 +9,9 @@ import { Clock, Calendar, MapPin, ChevronRight, ArrowLeft } from "lucide-react";
 import type { ScheduleV2 } from "@/types/schedule";
 import { useTheme } from "next-themes";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082";
+import type { Show } from "@/types";
 
-interface ShowDetails {
-  _id: { $oid: string };
-  title: string;
-  description: string;
-  duration_minutes: number;
-  language: string;
-  poster_url: string;
-  cast: any[];
-}
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 export default function ShowDetailsPage() {
   const params = useParams();
@@ -28,7 +20,7 @@ export default function ShowDetailsPage() {
   const { theme } = useTheme();
   const dark = theme === "dark";
 
-  const [show, setShow] = useState<ShowDetails | null>(null);
+  const [show, setShow] = useState<Show | null>(null);
   const [schedules, setSchedules] = useState<ScheduleV2[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -52,8 +44,8 @@ export default function ShowDetailsPage() {
           const schedData = await schedulesRes.json();
           setSchedules(schedData);
         }
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        setError((err instanceof Error ? err.message : String(err)));
       } finally {
         setLoading(false);
       }
@@ -111,10 +103,10 @@ export default function ShowDetailsPage() {
         <UserNav />
       </nav>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-8 py-12 flex flex-col lg:flex-row gap-12">
+      <main className="w-full lg:w-[90%] max-w-none mx-auto px-6 md:px-12 py-12 flex flex-col lg:flex-row gap-12">
         
         {/* Left Col: Poster & Details */}
-        <div className="w-full lg:w-1/3 flex flex-col gap-6">
+        <div className="w-full lg:w-1/3 flex flex-col gap-6 lg:sticky lg:top-24 h-fit">
           <motion.div 
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -141,6 +133,84 @@ export default function ShowDetailsPage() {
                     <span key={c.name} className="px-3 py-1 bg-[var(--card-bg)] border border-[var(--border)] rounded-md text-sm text-[var(--text-primary)]">{c.name}</span>
                   ))}
                 </div>
+              </div>
+            )}
+
+            {/* Performers / Host */}
+            {(show.host || (show.performers && show.performers.length > 0)) && (
+              <div className="mt-6">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">Lineup & Host</h3>
+                <div className="flex flex-wrap gap-4">
+                  {show.host && (
+                    <div className="flex items-center gap-3 bg-[var(--card-bg)] border border-[var(--border)] p-3 rounded-xl">
+                      <div className="w-10 h-10 rounded-full bg-gradient-to-tr from-pink-500 to-purple-500 flex items-center justify-center shadow-lg">
+                        <span className="text-white font-bold text-lg">{show.host.charAt(0)}</span>
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-wider leading-none mb-1">Host</p>
+                        <p className="text-sm font-bold text-[var(--text-primary)] leading-none">{show.host}</p>
+                      </div>
+                    </div>
+                  )}
+                  {show.performers && show.performers.map((p, i) => (
+                    <div key={i} className="flex items-center gap-3 bg-[var(--card-bg)] border border-[var(--border)] p-3 rounded-xl">
+                      <div className="w-10 h-10 rounded-full bg-[var(--bg-subtle)] overflow-hidden flex items-center justify-center">
+                        {p.photo_url ? (
+                          <img src={p.photo_url} alt={p.name} className="w-full h-full object-cover" />
+                        ) : (
+                          <span className="text-[var(--text-secondary)] font-bold text-lg">{p.name.charAt(0)}</span>
+                        )}
+                      </div>
+                      <div>
+                        <p className="text-[10px] text-[var(--text-muted)] font-bold uppercase tracking-wider leading-none mb-1">{p.role || "Performer"}</p>
+                        <p className="text-sm font-bold text-[var(--text-primary)] leading-none">{p.name}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Match / Sport details */}
+            {(show.sport || (show.team_a && show.team_b)) && (
+              <div className="mt-6">
+                <h3 className="text-sm font-bold uppercase tracking-wider text-[var(--text-muted)] mb-3">
+                  Match Details {show.sport ? `• ${show.sport}` : ''}
+                </h3>
+                
+                {show.team_a && show.team_b && (
+                  <div className="flex items-center justify-between bg-[var(--card-bg)] border border-[var(--border)] p-6 rounded-2xl">
+                    <div className="flex flex-col items-center flex-1">
+                      {show.team_a.logo_url ? (
+                        <img src={show.team_a.logo_url} className="w-16 h-16 object-contain mb-2" alt={show.team_a.name} />
+                      ) : (
+                        <div className="w-16 h-16 rounded-full bg-[var(--bg-subtle)] mb-2" />
+                      )}
+                      <span className="text-[var(--text-primary)] text-sm font-bold text-center leading-tight">{show.team_a.name}</span>
+                    </div>
+                    
+                    <div className="px-4 flex flex-col items-center">
+                      <span className="text-xl font-black text-[var(--text-muted)] mb-2">VS</span>
+                      <div className="w-[1px] h-8 bg-[var(--border)]"></div>
+                    </div>
+
+                    <div className="flex flex-col items-center flex-1">
+                      {show.team_b.logo_url ? (
+                        <img src={show.team_b.logo_url} className="w-16 h-16 object-contain mb-2" alt={show.team_b.name} />
+                      ) : (
+                        <div className="w-16 h-16 rounded-full bg-[var(--bg-subtle)] mb-2" />
+                      )}
+                      <span className="text-[var(--text-primary)] text-sm font-bold text-center leading-tight">{show.team_b.name}</span>
+                    </div>
+                  </div>
+                )}
+                
+                {show.venue && (
+                  <div className="mt-4 flex items-center gap-2 text-[var(--text-secondary)] font-medium bg-[var(--bg-subtle)] p-3 rounded-lg border border-[var(--border)]">
+                    <MapPin className="w-5 h-5 text-[var(--accent)]" />
+                    <span>{show.venue}</span>
+                  </div>
+                )}
               </div>
             )}
           </div>

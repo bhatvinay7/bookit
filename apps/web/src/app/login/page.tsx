@@ -30,7 +30,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="min-h-screen flex w-full font-sans overflow-hidden text-white relative">
+    <div className="min-h-screen flex w-full font-sans overflow-hidden relative">
       
       {/* ════ BACKGROUND MATCHING DASHBOARD SHOWCASE ════ */}
       <div className="fixed inset-0 z-0 pointer-events-none">
@@ -83,11 +83,11 @@ export default function LoginPage() {
             <div className="w-12 h-12 rounded-xl bg-[var(--accent)] flex items-center justify-center shadow-lg shadow-[var(--accent)]/30">
               <Ticket className="w-6 h-6 text-[#12111a]" />
             </div>
-            <span className="text-3xl font-black text-white tracking-tight font-display">BookIt</span>
+            <span className="text-3xl font-black text-[var(--text-primary)] tracking-tight font-display">BookIt</span>
           </div>
 
           <div className="mb-8">
-            <h2 className="text-2xl font-black text-white mb-1.5 font-display">Welcome Back</h2>
+            <h2 className="text-2xl font-black text-[var(--text-primary)] mb-1.5 font-display">Welcome Back</h2>
             <p className="text-sm text-[var(--text-secondary)] font-medium">Sign in to your account to book tickets.</p>
           </div>
 
@@ -100,7 +100,7 @@ export default function LoginPage() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
-                className="w-full px-4 py-3 bg-[var(--bg-subtle)] border border-[var(--border)] rounded-xl focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)] text-white transition-all placeholder:text-[var(--text-muted)]"
+                className="w-full px-4 py-3 bg-[var(--bg-subtle)] border border-[var(--border)] rounded-xl focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)] text-[var(--text-primary)] transition-all placeholder:text-[var(--text-muted)]"
               />
             </div>
             <div className="space-y-2">
@@ -114,7 +114,7 @@ export default function LoginPage() {
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 required
-                className="w-full px-4 py-3 bg-[var(--bg-subtle)] border border-[var(--border)] rounded-xl focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)] text-white transition-all placeholder:text-[var(--text-muted)]"
+                className="w-full px-4 py-3 bg-[var(--bg-subtle)] border border-[var(--border)] rounded-xl focus:outline-none focus:border-[var(--accent)] focus:ring-1 focus:ring-[var(--accent)] text-[var(--text-primary)] transition-all placeholder:text-[var(--text-muted)]"
               />
             </div>
 

@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Pagination, usePagination } from "./components/Pagination";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8082";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -137,7 +137,7 @@ export default function AdminDashboard() {
         setShowtimes(Array.isArray(st) ? st : []);
       })
       .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : "Failed to load data";
+        const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : "Failed to load data";
         setError(msg);
       })
       .finally(() => setLoading(false));

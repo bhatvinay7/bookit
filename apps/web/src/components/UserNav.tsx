@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Moon, Sun, LogOut, LogIn, UserPlus, User } from "lucide-react";
+import { Moon, Sun, LogOut, LogIn, UserPlus, User, Ticket } from "lucide-react";
 import { useTheme } from "next-themes";
 
 function useAuthStatus() {
@@ -55,6 +55,41 @@ export function UserNav() {
 
   if (!mounted) return null;
 
+  // Dropdown styles driven entirely by CSS variables so light/dark just work.
+  const dropdownStyle: React.CSSProperties = {
+    position: "absolute",
+    right: 0,
+    marginTop: "8px",
+    width: "224px",
+    zIndex: 50,
+    background: "var(--card-bg)",          // #ffffff in light, dark card in dark
+    border: "1px solid var(--border)",
+    borderRadius: "14px",
+    boxShadow: isDark
+      ? "0 8px 32px rgba(0,0,0,0.6)"
+      : "0 8px 32px rgba(0,0,0,0.12)",
+    overflow: "hidden",
+    paddingTop: "6px",
+    paddingBottom: "6px",
+  };
+
+  const menuItemStyle: React.CSSProperties = {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: "12px",
+    padding: "10px 16px",
+    fontSize: "14px",
+    fontWeight: 500,
+    color: "var(--text-secondary)",
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    textAlign: "left",
+    fontFamily: "inherit",
+    transition: "background 0.12s, color 0.12s",
+  };
+
   return (
     <div className="relative">
       <button
@@ -68,7 +103,7 @@ export function UserNav() {
       <AnimatePresence>
         {isOpen && (
           <>
-            <div 
+            <div
               className="fixed inset-0 z-40"
               onClick={() => setIsOpen(false)}
             />
@@ -77,43 +112,99 @@ export function UserNav() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 10, scale: 0.95 }}
               transition={{ duration: 0.15 }}
-              className="absolute right-0 mt-2 w-56 z-50 bg-gray-100 dark:bg-gray-900 border border-[var(--border)] rounded-xl shadow-xl overflow-hidden py-2"
+              style={dropdownStyle}
             >
               {isLoggedIn && userEmail && (
-                <div className="px-4 py-3 border-b border-[var(--border)] mb-2">
-                  <p className="text-xs font-semibold text-[var(--text-muted)] uppercase tracking-wider mb-1">Signed in as</p>
-                  <p className="text-sm font-bold text-[var(--text-primary)] truncate">{userEmail}</p>
+                <div style={{
+                  padding: "12px 16px",
+                  borderBottom: "1px solid var(--border)",
+                  marginBottom: "4px",
+                }}>
+                  <p style={{ fontSize: "11px", fontWeight: 600, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "2px" }}>
+                    Signed in as
+                  </p>
+                  <p style={{ fontSize: "13px", fontWeight: 700, color: "var(--text-primary)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {userEmail}
+                  </p>
                 </div>
               )}
-              
+
+              {/* Theme toggle */}
               <button
                 onClick={toggleTheme}
-                className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] transition-colors text-left"
+                style={menuItemStyle}
+                onMouseEnter={e => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-subtle)";
+                  (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
+                }}
+                onMouseLeave={e => {
+                  (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                  (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
+                }}
               >
                 {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
                 {isDark ? "Light Mode" : "Dark Mode"}
               </button>
 
               {isLoggedIn ? (
-                <button
-                  onClick={handleSignOut}
-                  className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-red-500 hover:bg-red-500/10 transition-colors text-left"
-                >
-                  <LogOut className="w-4 h-4" />
-                  Logout
-                </button>
+                <>
+                  <button
+                    onClick={() => go("/tickets")}
+                    style={menuItemStyle}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-subtle)";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
+                    }}
+                  >
+                    <Ticket className="w-4 h-4" />
+                    My Tickets
+                  </button>
+                  <button
+                    onClick={handleSignOut}
+                    style={{ ...menuItemStyle, color: "#ef4444" }}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(239,68,68,0.1)";
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                    }}
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Logout
+                  </button>
+                </>
               ) : (
                 <>
                   <button
                     onClick={() => go("/login")}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] transition-colors text-left"
+                    style={menuItemStyle}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-subtle)";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
+                    }}
                   >
                     <LogIn className="w-4 h-4" />
                     Login
                   </button>
                   <button
                     onClick={() => go("/register")}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 text-sm font-medium text-[var(--text-secondary)] hover:bg-[var(--bg-subtle)] hover:text-[var(--text-primary)] transition-colors text-left"
+                    style={menuItemStyle}
+                    onMouseEnter={e => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "var(--bg-subtle)";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text-primary)";
+                    }}
+                    onMouseLeave={e => {
+                      (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+                      (e.currentTarget as HTMLButtonElement).style.color = "var(--text-secondary)";
+                    }}
                   >
                     <UserPlus className="w-4 h-4" />
                     Sign Up
@@ -127,3 +218,4 @@ export function UserNav() {
     </div>
   );
 }
+

@@ -80,37 +80,39 @@ export default function ShowtimeCard({ showtime, onBook }: ShowtimeCardProps) {
         </span>
       </div>
 
-      {/* Seat availability */}
-      <div style={{ marginTop: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
-          <span style={{ fontSize: 11.5, color: "#6b7280" }}>Seats Available</span>
-          <span style={{ fontSize: 11.5, fontWeight: 600, color: pct > 50 ? "#16a34a" : pct > 20 ? "#d97706" : "#dc2626" }}>
-            {showtime.available_seats}/{showtime.total_seats}
-          </span>
+      {/* Footer Area: Seat availability and Book Button */}
+      <div style={{ marginTop: 14, display: "flex", alignItems: "flex-end", gap: 16 }}>
+        <div style={{ flex: 1 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 5 }}>
+            <span style={{ fontSize: 11.5, color: "#6b7280" }}>Seats Available</span>
+            <span style={{ fontSize: 11.5, fontWeight: 600, color: pct > 50 ? "#16a34a" : pct > 20 ? "#d97706" : "#dc2626" }}>
+              {showtime.available_seats}/{showtime.total_seats}
+            </span>
+          </div>
+          <div style={{ height: 4, background: "#f1f5f9", borderRadius: 99, overflow: "hidden" }}>
+            <div style={{ height: "100%", width: `${pct}%`, borderRadius: 99, background: pct > 50 ? "#22c55e" : pct > 20 ? "#f59e0b" : "#ef4444", transition: "width .4s" }} />
+          </div>
         </div>
-        <div style={{ height: 4, background: "#f1f5f9", borderRadius: 99, overflow: "hidden" }}>
-          <div style={{ height: "100%", width: `${pct}%`, borderRadius: 99, background: pct > 50 ? "#22c55e" : pct > 20 ? "#f59e0b" : "#ef4444", transition: "width .4s" }} />
-        </div>
-      </div>
 
-      {/* Book Button */}
-      {showtime.status !== "ended" && (
-        <button
-          onClick={() => bookingOpen && onBook?.(showtime.id)}
-          disabled={!bookingOpen}
-          style={{
-            marginTop: 14, width: "100%",
-            padding: "9px 0",
-            borderRadius: 10, border: "none", cursor: bookingOpen ? "pointer" : "not-allowed",
-            fontWeight: 600, fontSize: 13,
-            background: bookingOpen ? "#6366f1" : "#f1f5f9",
-            color: bookingOpen ? "white" : "#9ca3af",
-            transition: "background .2s",
-          }}
-        >
-          {bookingOpen ? "Book Now →" : `Opens in ${formatCountdown(secsLeft)}`}
-        </button>
-      )}
+        {/* Book Button */}
+        {showtime.status !== "ended" && (
+          <button
+            onClick={() => bookingOpen && onBook?.(showtime.id)}
+            disabled={!bookingOpen}
+            style={{
+              padding: "7px 16px",
+              borderRadius: 8, border: "none", cursor: bookingOpen ? "pointer" : "not-allowed",
+              fontWeight: 600, fontSize: 12,
+              background: bookingOpen ? "#6366f1" : "#f1f5f9",
+              color: bookingOpen ? "white" : "#9ca3af",
+              transition: "background .2s",
+              whiteSpace: "nowrap"
+            }}
+          >
+            {bookingOpen ? "Book" : formatCountdown(secsLeft)}
+          </button>
+        )}
+      </div>
     </div>
   );
 }

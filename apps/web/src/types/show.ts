@@ -30,6 +30,7 @@ export interface TeamInfo {
 export interface Show {
   /** MongoDB ObjectId hex string */
   id: string;
+  _id?: { $oid: string };
   show_type: ShowType;
   title: string;
   description?: string;

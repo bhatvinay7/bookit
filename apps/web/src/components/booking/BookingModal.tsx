@@ -39,25 +39,26 @@ export function BookingModal({ movie, onClose }: { movie: Movie; onClose: () => 
 
   // Real-time events
   useEffect(() => {
-    if (lastMessage?.event === "lock_slot" && lastMessage.seat_id) {
-      setLockedSeatIds(prev => [...prev, lastMessage.seat_id]);
+    const msg = lastMessage as any;
+    if (msg?.event === "lock_slot" && msg.seat_id) {
+      setLockedSeatIds(prev => [...prev, msg.seat_id]);
     }
-    if ((lastMessage?.event === "SeatUnlocked" || lastMessage?.event === "unlock_slot") && lastMessage.seat_id) {
-      setLockedSeatIds(prev => prev.filter(id => id !== lastMessage.seat_id));
+    if ((msg?.event === "SeatUnlocked" || msg?.event === "unlock_slot") && msg.seat_id) {
+      setLockedSeatIds(prev => prev.filter(id => id !== msg.seat_id));
     }
-    if (lastMessage?.event === "lock_slots_response") {
-      const locked: number[] = lastMessage.locked_seat_ids || [];
-      const failed: number[] = lastMessage.failed_seat_ids || [];
+    if (msg?.event === "lock_slots_response") {
+      const locked: number[] = msg.locked_seat_ids || [];
+      const failed: number[] = msg.failed_seat_ids || [];
       if (locked.length > 0) {
         setLockedSeatIds(prev => [...new Set([...prev, ...locked])]);
       }
       if (failed.length > 0) {
         setPicked(prev => prev.filter(id => !failed.includes(id)));
-        alert(lastMessage.message || "Failed to lock seat.");
+        alert(msg.message || "Failed to lock seat.");
       }
     }
-    if (lastMessage?.event === "unlock_slots_response") {
-      const unlocked: number[] = lastMessage.unlocked_seat_ids || [];
+    if (msg?.event === "unlock_slots_response") {
+      const unlocked: number[] = msg.unlocked_seat_ids || [];
       if (unlocked.length > 0) {
         setLockedSeatIds(prev => prev.filter(id => !unlocked.includes(id)));
       }

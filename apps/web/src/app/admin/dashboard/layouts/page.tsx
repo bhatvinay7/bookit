@@ -5,7 +5,7 @@ import type { SeatLayout, SeatLayoutSeat, LayoutSeatClass, ShowType, SeatInput }
 import { useToast } from "../components/ToastProvider";
 import { Pagination, usePagination } from "../components/Pagination";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8082";
+const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
 
 // ─── Seat Picker (custom visual grid — react-seat-picker wrapper) ─────────────
 // react-seat-picker v1 expects a specific row format; we wrap it here.

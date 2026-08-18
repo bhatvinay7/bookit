@@ -30,12 +30,12 @@ export default function Home() {
 
     async function fetchShows() {
       try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8082"}/api/user/shows`);
+        const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080"}/api/user/shows`);
         if (!res.ok) throw new Error("Failed to fetch shows");
         const data = await res.json();
         setShows(data);
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "Error fetching shows");
+        setError(err instanceof Error ? (err instanceof Error ? err.message : String(err)) : "Error fetching shows");
       } finally {
         setLoading(false);
       }
@@ -135,7 +135,7 @@ export default function Home() {
       {/* ════ HERO SECTION ════ */}
       <main className="flex-1 flex flex-col relative z-10">
         <section className="relative w-full overflow-hidden">
-          <div className="relative w-full min-h-[500px] sm:min-h-[650px] pt-28 sm:pt-36 pb-20 sm:pb-28 flex flex-col justify-center">
+          <div className="relative w-full min-h-[500px] sm:min-h-[650px] lg:min-h-[95vh] pt-28 sm:pt-36 pb-20 sm:pb-28 flex flex-col justify-center">
             {/* Gradient background */}
             <Image 
               src="/hero-gradient-bg.png" 
@@ -185,7 +185,7 @@ export default function Home() {
                   transition={{ duration: 0.5, delay: 0.45 }}
                   className="flex items-center gap-4"
                 >
-                  <Link href="/shows">
+                  <Link href="/dashboard">
                     <button className="px-7 py-3 bg-white text-indigo-900 hover:bg-white/90 font-bold rounded-xl transition-all shadow-lg flex items-center gap-2 text-sm">
                       <Smartphone className="w-4 h-4" />
                       Start Booking
@@ -199,17 +199,17 @@ export default function Home() {
               initial={{ opacity: 0, scale: 0.96 }}
               animate={{ opacity: 1, scale: 1 }}
               transition={{ duration: 0.7, delay: 0.3 }}
-              className="relative w-full max-w-sm mx-auto flex justify-center lg:justify-end"
+              className="relative w-full max-w-md lg:max-w-lg mx-auto flex justify-center lg:justify-end"
             >
               <div className="relative">
                 {/* Phone Frame */}
-                <div className="w-[280px] sm:w-[300px] bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-2xl shadow-black/30 p-3 relative border border-slate-200 dark:border-slate-800">
+                <div className="w-[280px] sm:w-[300px] lg:w-[360px] lg:h-[90vh] lg:max-h-[850px] bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-2xl shadow-black/30 p-3 relative border border-slate-200 dark:border-slate-800 flex flex-col">
                   {/* Notch */}
                   <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-7 bg-white dark:bg-slate-900 rounded-b-2xl z-20 flex items-center justify-center border-b border-slate-200 dark:border-slate-800">
                     <div className="w-16 h-4 bg-black rounded-full" />
                   </div>
                   {/* Screen */}
-                  <div className="bg-slate-50 dark:bg-[#0a0a0a] rounded-[2rem] overflow-hidden">
+                  <div className="bg-slate-50 dark:bg-[#0a0a0a] rounded-[2rem] overflow-hidden flex-1 flex flex-col">
                     {/* Status Bar */}
                     <div className="bg-indigo-600 px-5 pt-8 pb-4">
                       <div className="flex items-center justify-between mb-3">
@@ -221,18 +221,17 @@ export default function Home() {
                     </div>
 
                     {/* Booking Cards */}
-                    <div className="p-3 flex flex-col gap-2.5">
+                    <div className="p-3 flex flex-col gap-2.5 flex-1 overflow-y-auto">
                       {[
-                        { time: "7:00 PM - 9:30 PM", title: "Avengers: Endgame", venue: "PVR Cinemas", type: "Movie", color: "bg-blue-500", price: "$12" },
-                        { time: "8:30 PM - 11:00 PM", title: "Coldplay Live", venue: "National Stadium", type: "Concert", color: "bg-purple-500", price: "$85" },
-                        { time: "3:00 PM - 6:00 PM", title: "Lakers vs Bulls", venue: "Staples Center", type: "Sports", color: "bg-emerald-500", price: "$120" },
+                        { title: "Avengers: Endgame", venue: "PVR Cinemas", type: "Movie", color: "bg-blue-500", price: "$12" },
+                        { title: "Coldplay Live", venue: "National Stadium", type: "Concert", color: "bg-purple-500", price: "$85" },
+                        { title: "Lakers vs Bulls", venue: "Staples Center", type: "Sports", color: "bg-emerald-500", price: "$120" },
                       ].map((booking, i) => (
                         <div key={i} className="bg-white dark:bg-[#1a1a1a] rounded-xl p-3 border border-slate-100 dark:border-white/5 shadow-sm">
                           <div className="flex items-start justify-between mb-1.5">
-                            <p className="text-[9px] text-slate-400 dark:text-slate-500 font-medium">{booking.time}</p>
+                            <p className="text-[12px] font-bold text-amber-500 dark:text-amber-400 mb-0.5">{booking.title}</p>
                             <span className={`text-[8px] font-bold text-white px-1.5 py-0.5 rounded ${booking.color}`}>{booking.type}</span>
                           </div>
-                          <p className="text-xs font-bold text-slate-800 dark:text-white mb-0.5">{booking.title}</p>
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-1">
                               <MapPin className="w-2.5 h-2.5 text-slate-400" />

@@ -18,7 +18,7 @@ export class ApiError extends Error {
 }
 
 // ─── Base URL (from .env.local → NEXT_PUBLIC_API_URL) ────────────────────────
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8082';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8080';
 
 /** Full public user API root */
 const USER_API  = `${API_URL}/api/user`;
@@ -86,12 +86,17 @@ export function useMovies(category: string = "All", city: string = "All") {
 }
 
 // ─── User: Search ─────────────────────────────────────────────────────────────
-const SEARCH_API_URL = process.env.NEXT_PUBLIC_SEARCH_API_URL ?? 'http://localhost:8084';
+const SEARCH_API_URL = process.env.NEXT_PUBLIC_SEARCH_API_URL ?? 'http://localhost:8080';
 
-export function useSearchShows(query: string) {
+export function useSearchShows(query: string, city: string = "All") {
   return useQuery<Show[], ApiError>({
-    queryKey: ['searchShows', query],
-    queryFn: () => apiFetch<Show[]>(`${SEARCH_API_URL}/api/search?q=${encodeURIComponent(query)}`),
+    queryKey: ['searchShows', query, city],
+    queryFn: () => {
+      const url = new URL(`${SEARCH_API_URL}/api/search`);
+      url.searchParams.append('q', query);
+      if (city !== "All") url.searchParams.append('city', city);
+      return apiFetch<Show[]>(url.toString());
+    },
     enabled: query.length > 1,
     retry: false,
   });
@@ -101,7 +106,7 @@ export function useSearchShows(query: string) {
 export function useShowtimes(movieId: number | null) {
   return useQuery<Showtime[], ApiError>({
     queryKey: ['showtimes', movieId],
-    queryFn: () => apiFetch<Showtime[]>(`${USER_API}/movies/${movieId}/showtimes`),
+    queryFn: () => apiFetch<Showtime[]>(`${USER_API}/schedules_v2/show/${movieId}`),
     enabled: !!movieId,
     // Refetch every 30s to keep countdown data fresh
     refetchInterval: 30_000,
@@ -112,7 +117,7 @@ export function useShowtimes(movieId: number | null) {
 export function useSeats(showtimeId: number | null) {
   return useQuery<SeatInfo[], ApiError>({
     queryKey: ['seats', showtimeId],
-    queryFn: () => apiFetch<SeatInfo[]>(`${USER_API}/showtimes/${showtimeId}/seats`),
+    queryFn: () => apiFetch<SeatInfo[]>(`${USER_API}/schedules_v2/${showtimeId}/seats`),
     enabled: !!showtimeId,
     refetchInterval: 10_000,
   });
@@ -155,7 +160,7 @@ export function useAdminStats(token: string) {
 export function useAdminMovies(token: string) {
   return useQuery<AdminMovie[], ApiError>({
     queryKey: ['adminMovies'],
-    queryFn: () => apiFetch<AdminMovie[]>(`${ADMIN_API}/movies`, { headers: adminHeaders(token) }),
+    queryFn: () => apiFetch<AdminMovie[]>(`${ADMIN_API}/shows`, { headers: adminHeaders(token) }),
     enabled: !!token,
   });
 }
@@ -164,7 +169,7 @@ export function useAddMovie(token: string) {
   const qc = useQueryClient();
   return useMutation<AdminMovie, ApiError, Partial<AdminMovie>>({
     mutationFn: data =>
-      apiFetch<AdminMovie>(`${ADMIN_API}/movies`, {
+      apiFetch<AdminMovie>(`${ADMIN_API}/shows`, {
         method: 'POST', headers: adminHeaders(token), body: JSON.stringify(data),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['adminMovies'] }),
@@ -175,7 +180,7 @@ export function useUpdateMovie(token: string) {
   const qc = useQueryClient();
   return useMutation<AdminMovie, ApiError, { id: number; data: Partial<AdminMovie> }>({
     mutationFn: ({ id, data }) =>
-      apiFetch<AdminMovie>(`${ADMIN_API}/movies/${id}`, {
+      apiFetch<AdminMovie>(`${ADMIN_API}/shows/${id}`, {
         method: 'PUT', headers: adminHeaders(token), body: JSON.stringify(data),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['adminMovies'] }),
@@ -186,7 +191,7 @@ export function useDeleteMovie(token: string) {
   const qc = useQueryClient();
   return useMutation<void, ApiError, number>({
     mutationFn: id =>
-      apiFetch<void>(`${ADMIN_API}/movies/${id}`, { method: 'DELETE', headers: adminHeaders(token) }),
+      apiFetch<void>(`${ADMIN_API}/shows/${id}`, { method: 'DELETE', headers: adminHeaders(token) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['adminMovies'] }),
   });
 }
@@ -195,7 +200,7 @@ export function useDeleteMovie(token: string) {
 export function useAdminShowtimes(token: string) {
   return useQuery<AdminShowtime[], ApiError>({
     queryKey: ['adminShowtimes'],
-    queryFn: () => apiFetch<AdminShowtime[]>(`${ADMIN_API}/showtimes`, { headers: adminHeaders(token) }),
+    queryFn: () => apiFetch<AdminShowtime[]>(`${ADMIN_API}/schedules`, { headers: adminHeaders(token) }),
     enabled: !!token,
   });
 }
@@ -204,7 +209,7 @@ export function useCancelShowtime(token: string) {
   const qc = useQueryClient();
   return useMutation<void, ApiError, number>({
     mutationFn: id =>
-      apiFetch<void>(`${ADMIN_API}/showtimes/${id}`, { method: 'DELETE', headers: adminHeaders(token) }),
+      apiFetch<void>(`${ADMIN_API}/schedules/${id}`, { method: 'DELETE', headers: adminHeaders(token) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['adminShowtimes'] }),
   });
 }
@@ -213,7 +218,7 @@ export function useScheduleMovie(token: string) {
   const qc = useQueryClient();
   return useMutation<unknown, ApiError, ScheduleData>({
     mutationFn: data =>
-      apiFetch(`${ADMIN_API}/schedule`, {
+      apiFetch(`${ADMIN_API}/schedules`, {
         method: 'POST', headers: adminHeaders(token), body: JSON.stringify(data),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['adminShowtimes'] }),
@@ -224,7 +229,7 @@ export function useScheduleMovie(token: string) {
 export function useScreens(token: string) {
   return useQuery<Screen[], ApiError>({
     queryKey: ['screens'],
-    queryFn: () => apiFetch<Screen[]>(`${ADMIN_API}/screens`, { headers: adminHeaders(token) }),
+    queryFn: () => apiFetch<Screen[]>(`${ADMIN_API}/layouts`, { headers: adminHeaders(token) }),
     enabled: !!token,
   });
 }
