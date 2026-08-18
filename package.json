@@ -1,0 +1,21 @@
+{
+  "name": "bookit",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "turbo run build",
+    "dev": "turbo run dev",
+    "lint": "turbo run lint"
+  },
+  "devDependencies": {
+    "turbo": "latest"
+  },
+  "dependencies": {
+    "ioredis": "^6.0.0",
+    "mongodb": "^7.5.0",
+    "pg": "^8.22.0"
+  }
+}

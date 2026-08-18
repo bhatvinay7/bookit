@@ -1,0 +1,7 @@
+target
+node_modules
+.next
+.git
+.env*
+!apps/*/.env
+apps/web/.next
