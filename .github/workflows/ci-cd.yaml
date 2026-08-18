@@ -1,0 +1,471 @@
+name: CI/CD & GitOps Automation
+
+on:
+  push:
+    branches: [dev,main]
+  pull_request:
+    branches: [dev,main]
+  workflow_dispatch:
+    inputs:
+      service:
+        description: 'Service to build'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - http-server
+          - ws-server
+          - gateway-keeper
+          - lock-server
+          - notification-worker
+          - payment-processor
+          - search-server
+          - web
+env:
+  REGISTRY: ghcr.io
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
+
+jobs:
+
+
+  validate:
+    name: Validate Node.js & Rust Workspace
+    runs-on: ubuntu-22.04
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.0.0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Node.js dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint and Type Check TypeScript
+        run: |
+          pnpm turbo run lint
+          pnpm turbo run check-types
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler libpq-dev postgresql-client
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check Rust formatting and lints
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --workspace -- -D warnings
+
+      - name: Link-check Rust workspace (cargo check)
+        run: cargo check --workspace --all-targets
+
+      - name: Prepare Rust test environment
+        env:
+          TEST_REDIS_URL: ${{ vars.TEST_REDIS_URL || secrets.TEST_REDIS_URL || 'redis://127.0.0.1:6379' }}
+        run: |
+          cat > .env.test <<EOF
+          TEST_REDIS_URL=${TEST_REDIS_URL}
+          EOF
+
+      - name: Run Rust workspace tests
+        env:
+          TEST_REDIS_URL: ${{ vars.TEST_REDIS_URL || secrets.TEST_REDIS_URL || 'redis://127.0.0.1:6379' }}
+        run: cargo test --workspace --all-targets
+
+  detect-changes:
+    name: Detect Changed Workspace Services
+    runs-on: ubuntu-22.04
+    outputs:
+      services: ${{ steps.resolve.outputs.services }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # Need at least 2 commits so paths-filter can diff HEAD vs HEAD~1 on push events
+          fetch-depth: 2
+
+      - name: Detect changed paths
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            # If the CI pipeline itself changes → rebuild everything
+            ci:
+              - '.github/workflows/**'
+
+            http-server:
+              - 'apps/http-server/**'
+              - 'packages/db/**'
+              - 'packages/redis-conn/**'
+              - 'packages/mongo-conn/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            ws-server:
+              - 'apps/ws-server/**'
+              - 'packages/redis-conn/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            gateway-keeper:
+              - 'apps/gateway-keeper/**'
+              - 'packages/rmq-conn/**'
+              - 'packages/redis-conn/**'
+              - 'packages/proto/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            lock-server:
+              - 'apps/lock-server/**'
+              - 'packages/rmq-conn/**'
+              - 'packages/redis-conn/**'
+              - 'packages/db/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            notification-worker:
+              - 'apps/notification-worker/**'
+              - 'packages/rmq-conn/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            payment-processor:
+              - 'apps/payment-processor/**'
+              - 'packages/rmq-conn/**'
+              - 'packages/db/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            search-server:
+              - 'apps/search-server/**'
+              - 'packages/rmq-conn/**'
+              - 'packages/proto/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+            web:
+              - 'apps/web/**'
+              - 'pnpm-lock.yaml'
+              - 'turbo.json'
+
+      - name: Resolve services to build
+        id: resolve
+        shell: bash
+        run: |
+          ALL_SERVICES='["http-server","ws-server","gateway-keeper","lock-server","notification-worker","payment-processor","search-server","web"]'
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ "${{ inputs.service }}" = "all" ]; then
+              echo "Manual trigger: rebuilding all services"
+              echo "services=$ALL_SERVICES" >> "$GITHUB_OUTPUT"
+            else
+              echo "Manual trigger: rebuilding ${{ inputs.service }}"
+              json=$(printf '%s\n' "${{ inputs.service }}" | jq -R . | jq -s -c .)
+              echo "services=$json" >> "$GITHUB_OUTPUT"
+            fi
+            exit 0
+          fi
+
+          # If the CI/CD pipeline file itself changed → rebuild every service
+          if [ "${{ steps.filter.outputs.ci }}" = "true" ]; then
+            echo "CI pipeline changed: rebuilding all services"
+            echo "services=$ALL_SERVICES" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Otherwise collect only the services whose source files changed
+          services=()
+          if [ "${{ steps.filter.outputs.http-server }}" = "true" ];        then services+=("http-server"); fi
+          if [ "${{ steps.filter.outputs.ws-server }}" = "true" ];          then services+=("ws-server"); fi
+          if [ "${{ steps.filter.outputs.gateway-keeper }}" = "true" ];     then services+=("gateway-keeper"); fi
+          if [ "${{ steps.filter.outputs.lock-server }}" = "true" ];        then services+=("lock-server"); fi
+          if [ "${{ steps.filter.outputs.notification-worker }}" = "true" ]; then services+=("notification-worker"); fi
+          if [ "${{ steps.filter.outputs.payment-processor }}" = "true" ];  then services+=("payment-processor"); fi
+          if [ "${{ steps.filter.outputs.search-server }}" = "true" ];      then services+=("search-server"); fi
+          if [ "${{ steps.filter.outputs.web }}" = "true" ];                then services+=("web"); fi
+
+          if [ ${#services[@]} -eq 0 ]; then
+            echo "No relevant service files changed — skipping build"
+            echo 'services=[]' >> "$GITHUB_OUTPUT"
+          else
+            json=$(printf '%s\n' "${services[@]}" | jq -R . | jq -s -c .)
+            echo "services=$json" >> "$GITHUB_OUTPUT"
+            echo "Building changed services: ${services[*]}"
+          fi
+
+  build-and-push:
+    name: Build & Push Docker Images
+    needs: [validate, detect-changes]
+    # Build on push to dev or main when at least one service was affected.
+    # Pull requests do not push images — validation only.
+    if: |
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') &&
+      needs.detect-changes.outputs.services != '[]' &&
+      needs.detect-changes.outputs.services != ''
+    runs-on: ubuntu-22.04
+    environment: production
+    permissions:
+      contents: read
+      packages: write   # required to push to ghcr.io
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJSON(needs.detect-changes.outputs.services) }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker Metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/bookit-${{ matrix.service }}
+          tags: |
+            type=sha,prefix=commit-
+            type=raw,value=${{ github.ref_name }}-latest
+
+      - name: Build and push Multi-Stage image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/${{ matrix.service }}/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
+            NEXT_PUBLIC_SOCKET_URL=${{ secrets.NEXT_PUBLIC_SOCKET_URL }}
+            NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
+            NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=${{ secrets.CLOUDINARY_CLOUD_NAME }}
+            NEXT_PUBLIC_R2_PUBLIC_URL=${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}
+            NEXT_PUBLIC_USE_REMOTE_STOCKFISH=${{ secrets.NEXT_PUBLIC_USE_REMOTE_STOCKFISH }}
+
+  update-gitops-tags:
+    name: Update ArgoCD GitOps Manifests
+    needs: [build-and-push, detect-changes]
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') && needs.detect-changes.outputs.services != '[]' && needs.detect-changes.outputs.services != ''
+    runs-on: ubuntu-22.04
+    environment: production   # Required to access environment-scoped secrets (e.g. GITOPS_TOKEN)
+    steps:
+      - name: Checkout GitOps repository
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.GITOPS_REPO || 'bhatvinay7/bookit-k8s' }}
+          # GITOPS_TOKEN must be a PAT with 'contents: write' access to bookit-k8s
+          # GITHUB_TOKEN only works on the current repo and will 404 on external repos
+          token: ${{ secrets.GITOPS_TOKEN || github.token }}
+          path: gitops-repo
+
+      - name: Configure kubectl
+        env:
+          KUBE_DATA: ${{ secrets.KUBECONFIG }}
+        run: |
+          if [ -n "$KUBE_DATA" ]; then
+            mkdir -p ~/.kube
+            if printf "%s" "$KUBE_DATA" | grep -q "apiVersion:"; then
+              printf "%s" "$KUBE_DATA" > ~/.kube/config
+            else
+              printf "%s" "$KUBE_DATA" | base64 -d > ~/.kube/config
+            fi
+            chmod 600 ~/.kube/config
+          else
+            echo "Error: KUBECONFIG secret is not set, cannot run fully automated gitops."
+            exit 1
+          fi
+
+      - name: Setup Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Update image tags in kustomization.yaml for changed services
+        working-directory: gitops-repo
+        env:
+          # KUSTOMIZE_DIR: path inside bookit-k8s repo containing kustomization.yaml
+          # Based on bookit-k8s repo structure: apps/ directory holds kustomization.yaml
+          KUSTOMIZE_DIR: ${{ secrets.KUSTOMIZE_DIR || 'apps' }}
+        run: |
+          # Try explicit path first, then fallback to dynamic discovery
+          if [ -f "${KUSTOMIZE_DIR}/kustomization.yaml" ] || [ -f "${KUSTOMIZE_DIR}/kustomization.yml" ]; then
+            echo "Using KUSTOMIZE_DIR: ${KUSTOMIZE_DIR}"
+            cd "${KUSTOMIZE_DIR}"
+          else
+            echo "'${KUSTOMIZE_DIR}' not found, scanning repo..."
+            KUSTOMIZATION_PATH=$(find . -type f \( -name "kustomization.yaml" -o -name "kustomization.yml" \) \
+              | sort | head -n 1)
+            if [ -n "$KUSTOMIZATION_PATH" ]; then
+              echo "Found kustomization at: $KUSTOMIZATION_PATH"
+              cd "$(dirname "$KUSTOMIZATION_PATH")"
+            else
+              echo "ERROR: No kustomization.yaml found in bookit-k8s repo. Files present:"
+              find . -type f | sort
+              exit 1
+            fi
+          fi
+
+          echo "Running kustomize in: $(pwd)"
+          SHORT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          TAG="commit-${SHORT_SHA}"
+
+          # Only update image tags for services that actually changed and were built
+          SERVICES=$(echo '${{ needs.detect-changes.outputs.services }}' | jq -r '.[]')
+
+          for svc in $SERVICES; do
+            IMAGE_NAME="${{ env.REGISTRY }}/${{ github.repository_owner }}/bookit-${svc}"
+            # Ensure the image name is strictly lowercase as required by Docker registries
+            IMAGE_NAME=$(echo "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
+            echo "Updating image tag for bookit-${svc} to ${TAG}"
+            kustomize edit set image "bookit-${svc}=${IMAGE_NAME}:${TAG}"
+          done
+
+      - name: Generate Sealed Secrets
+        working-directory: gitops-repo
+        env:
+          KUSTOMIZE_DIR: ${{ secrets.KUSTOMIZE_DIR || 'apps' }}
+          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL }}
+          INVITATION_ENCRYPTION_KEY: ${{ secrets.INVITATION_ENCRYPTION_KEY }}
+          MONGO_DB_URL: ${{ secrets.MONGO_DB_URL }}
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: ${{ secrets.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          RABBITMQ_URL: ${{ secrets.RABBITMQ_URL }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          REPLICATION_URL: ${{ secrets.REPLICATION_URL }}
+          SLOT_NAME: ${{ secrets.SLOT_NAME }}
+          PUBLICATION: ${{ secrets.PUBLICATION }}
+          NEXT_PUBLIC_SOCKET_URL: ${{ secrets.NEXT_PUBLIC_SOCKET_URL }}
+          NEXT_PUBLIC_R2_PUBLIC_URL: ${{ secrets.NEXT_PUBLIC_R2_PUBLIC_URL }}
+          NEXT_PUBLIC_USE_REMOTE_STOCKFISH: ${{ secrets.NEXT_PUBLIC_USE_REMOTE_STOCKFISH }}
+          CLIENT_URL: ${{ secrets.CLIENT_URL }}
+        run: |
+          if [ -z "${{ secrets.KUBECONFIG }}" ]; then
+            echo "Error: KUBECONFIG is not set in GitHub Secrets. Cannot connect to cluster for automatic secret sealing."
+            exit 1
+          fi
+          
+          # Install kubeseal securely in /tmp to prevent it from being committed by git add -A
+          wget -qO /tmp/kubeseal.tar.gz https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.26.2/kubeseal-0.26.2-linux-amd64.tar.gz
+          tar -xzf /tmp/kubeseal.tar.gz -C /tmp kubeseal
+          sudo install -m 755 /tmp/kubeseal /usr/local/bin/kubeseal
+          
+          if [ -f "${KUSTOMIZE_DIR}/kustomization.yaml" ] || [ -f "${KUSTOMIZE_DIR}/kustomization.yml" ]; then
+            cd "${KUSTOMIZE_DIR}"
+          else
+            KUSTOMIZATION_PATH=$(find . -type f \( -name "kustomization.yaml" -o -name "kustomization.yml" \) | sort | head -n 1)
+            if [ -n "$KUSTOMIZATION_PATH" ]; then
+              cd "$(dirname "$KUSTOMIZATION_PATH")"
+            else
+              echo "ERROR: kustomization file not found for secrets."
+              exit 1
+            fi
+          fi
+          
+          # Dynamically check if controller exists, install it if it does not
+          CONTROLLER_SVC=$(kubectl get svc --all-namespaces --no-headers | grep -i sealed-secret | awk '{print $1 " " $2}' | head -n 1)
+          if [ -z "$CONTROLLER_SVC" ]; then
+            echo "Sealed-secrets controller not found! Installing it automatically..."
+            kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.26.2/controller.yaml
+            CONTROLLER_NS="kube-system"
+            CONTROLLER_NAME="sealed-secrets-controller"
+            CONTROLLER_DEPLOY="deployment.apps/sealed-secrets-controller"
+          else
+            CONTROLLER_NS=$(echo "$CONTROLLER_SVC" | awk '{print $1}')
+            CONTROLLER_NAME=$(echo "$CONTROLLER_SVC" | awk '{print $2}')
+            CONTROLLER_DEPLOY=$(kubectl get deploy -n "$CONTROLLER_NS" -o name | grep -i sealed | head -n 1)
+          fi
+          
+          echo "Waiting up to 60s for the controller ($CONTROLLER_DEPLOY) to boot and become healthy..."
+          if ! kubectl rollout status "$CONTROLLER_DEPLOY" -n "$CONTROLLER_NS" --timeout=60s; then
+            echo "ERROR: Controller did not become ready in time."
+            exit 1
+          fi
+          
+          # Generate Backend Secrets
+          kubectl create secret generic backend-secrets \
+            --from-literal=CLOUDFLARE_R2_SECRET_ACCESS_KEY="$CLOUDFLARE_R2_SECRET_ACCESS_KEY" \
+            --from-literal=CLOUDINARY_API_KEY="$CLOUDINARY_API_KEY" \
+            --from-literal=CLOUDINARY_API_SECRET="$CLOUDINARY_API_SECRET" \
+            --from-literal=CLOUDINARY_CLOUD_NAME="$CLOUDINARY_CLOUD_NAME" \
+            --from-literal=DATABASE_URL="$DATABASE_URL" \
+            --from-literal=GRPC_SERVER_URL="$GRPC_SERVER_URL" \
+            --from-literal=INVITATION_ENCRYPTION_KEY="$INVITATION_ENCRYPTION_KEY" \
+            --from-literal=MONGO_DB_URL="$MONGO_DB_URL" \
+            --from-literal=REDIS_URL="$REDIS_URL" \
+            --from-literal=RABBITMQ_URL="$RABBITMQ_URL" \
+            --from-literal=SMTP_HOST="$SMTP_HOST" \
+            --from-literal=SMTP_PORT="$SMTP_PORT" \
+            --from-literal=SMTP_SECURE="$SMTP_SECURE" \
+            --from-literal=SMTP_USER="$SMTP_USER" \
+            --from-literal=SMTP_PASS="$SMTP_PASS" \
+            --from-literal=SMTP_FROM="$SMTP_FROM" \
+            --from-literal=REPLICATION_URL="$REPLICATION_URL" \
+            --from-literal=SLOT_NAME="$SLOT_NAME" \
+            --from-literal=PUBLICATION="$PUBLICATION" \
+            --from-literal=GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
+            --from-literal=GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
+            --from-literal=CLIENT_URL="$CLIENT_URL" \
+            --dry-run=client -o yaml | kubeseal --controller-name "$CONTROLLER_NAME" --controller-namespace "$CONTROLLER_NS" --format yaml > sealed-backend-secrets.yaml
+            
+          # Generate Frontend Secrets
+          kubectl create secret generic frontend-secrets \
+            --from-literal=GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
+            --from-literal=GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
+            --from-literal=NEXT_PUBLIC_API_URL="$NEXT_PUBLIC_API_URL" \
+            --from-literal=NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME="$NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME" \
+            --from-literal=NEXT_PUBLIC_SOCKET_URL="$NEXT_PUBLIC_SOCKET_URL" \
+            --from-literal=NEXT_PUBLIC_R2_PUBLIC_URL="$NEXT_PUBLIC_R2_PUBLIC_URL" \
+            --from-literal=NEXT_PUBLIC_USE_REMOTE_STOCKFISH="$NEXT_PUBLIC_USE_REMOTE_STOCKFISH" \
+            --dry-run=client -o yaml | kubeseal --controller-name "$CONTROLLER_NAME" --controller-namespace "$CONTROLLER_NS" --format yaml > sealed-frontend-secrets.yaml
+
+      - name: Commit and push GitOps tag updates
+        working-directory: gitops-repo
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(gitops): update image tags to commit-$(echo '${{ github.sha }}' | cut -c1-7) [skip ci]"
+            git push origin HEAD:main
+          else
+            echo "No image tag changes to commit."
+          fi
+
+

@@ -1,0 +1,15 @@
+[workspace]
+members = [
+    "apps/http-server",
+    "apps/ws-server",
+    "apps/payment-processor",
+    "apps/notification-worker",
+    "packages/db",
+    "packages/redis-conn",
+    "packages/rmq-conn",
+    "packages/mongo-conn",
+    "apps/gateway-keeper",
+    "apps/search-server",
+    "apps/lock-server"
+, "packages/telemetry", "apps/cdc-worker", "packages/proto"]
+resolver = "2"
