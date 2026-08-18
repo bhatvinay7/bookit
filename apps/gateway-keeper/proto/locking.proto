@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package locking;
+
+service SlotLockingService {
+  rpc LockSlot (LockSlotRequest) returns (LockSlotResponse);
+  rpc UnlockSlot (UnlockSlotRequest) returns (UnlockSlotResponse);
+}
+
+message LockSlotRequest {
+  int32 showtime_id = 1;
+  repeated int32 seat_ids = 2;
+  int32 user_id = 3;
+}
+
+message LockSlotResponse {
+  bool success = 1;
+  string message = 2;
+  repeated int32 locked_seat_ids = 3;
+  repeated int32 failed_seat_ids = 4;
+}
+
+message UnlockSlotRequest {
+  int32 showtime_id = 1;
+  repeated int32 seat_ids = 2;
+  int32 user_id = 3;
+}
+
+message UnlockSlotResponse {
+  bool success = 1;
+  string message = 2;
+  repeated int32 unlocked_seat_ids = 3;
+}
