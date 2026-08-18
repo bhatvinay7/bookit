@@ -1,0 +1,13 @@
+[package]
+name = "bookit-telemetry"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+opentelemetry = { version = "0.22", features = ["trace", "metrics"] }
+opentelemetry_sdk = { version = "0.22", features = ["rt-tokio", "trace", "metrics"] }
+opentelemetry-otlp = { version = "0.15", features = ["grpc-tonic", "metrics", "trace"] }
+tracing = "0.1"
+tracing-opentelemetry = "0.23"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+tokio = { version = "1", features = ["full"] }
