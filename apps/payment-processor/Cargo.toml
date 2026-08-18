@@ -1,0 +1,30 @@
+[package]
+name = "payment-processor"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bookit-telemetry = { version = "0.1.0", path = "../../packages/telemetry" }
+bb8-redis = "0.26.0"
+bookit-db = { version = "0.1.0", path = "../../packages/db" }
+diesel = "2.3.11"
+futures = "0.3.32"
+lapin = { version = "4.10.0", features = ["rustls"] }
+rustls = { version = "0.23", features = ["ring"] }
+redis = { version = "1.4.1", features = ["tokio-native-tls-comp"] }
+redis-conn = { version = "0.1.0", path = "../../packages/redis-conn" }
+rmq-conn = { version = "0.1.0", path = "../../packages/rmq-conn" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.150"
+tokio = { version = "1.53.0", features = ["full"] }
+tokio-stream = "0.1.18"
+uuid = { version = "1.24.0", features = ["v4", "serde"] }
+chrono = { version = "0.4.45", features = ["serde"] }
+bigdecimal = { version = "0.4", features = ["serde"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+dotenvy = "0.15"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+anyhow = "1.0"
+bson = { version = "2.14.0", features = ["chrono-0_4", "uuid-1"] }
