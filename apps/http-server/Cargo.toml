@@ -1,0 +1,49 @@
+[package]
+name = "http-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+bookit-telemetry = { version = "0.1.0", path = "../../packages/telemetry" }
+axum = { version = "0.7.5", features = ["ws", "multipart", "macros"] }
+tokio = { version = "1.37.0", features = ["full"] }
+tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tower-http = { version = "0.5.2", features = ["cors"] }
+lapin = { version = "4.10.0", features = ["rustls"] }
+rmq-conn = { path = "../../packages/rmq-conn" }
+bookit-db    = { path = "../../packages/db" }
+bookit-redis = { path = "../../packages/redis-conn", package = "redis-conn" }
+rustls = { version = "0.23", features = ["ring"] }
+bookit-mongo = { path = "../../packages/mongo-conn" }
+mongodb      = { version = "3" }
+bson         = { version = "2", features = ["chrono-0_4"] }
+bcrypt = "0.19.2"
+jsonwebtoken = "9.3.0"
+uuid = { version = "1.24.0", features = ["v4"] }
+redis = { version = "1.4.1", features = ["tokio-comp", "connection-manager", "tokio-native-tls-comp"] }
+futures = "0.3.32"
+dotenvy = "0.15.7"
+diesel = { version = "2.3.11", features = ["postgres"] }
+chrono = "0.4.45"
+bigdecimal = "0.4.10"
+printpdf = "0.7.0"
+aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
+aws-credential-types = { version = "1", features = ["hardcoded-credentials"] }
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+aws-smithy-http = "0.60"
+mime = "0.3"
+bytes = "1"
+anyhow = "1"
+thiserror = "2"
+validator = { version = "0.20", features = ["derive"] }
+reqwest = { version = "0.13.4", features = ["json"] }
+hmac = "0.13.0"
+sha2 = "0.11.0"
+hex = "0.4.3"
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
+http-body-util = "0.1"
+uuid = { version = "1.24.0", features = ["v4"] }
