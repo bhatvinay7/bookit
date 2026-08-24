@@ -50,15 +50,24 @@ impl SingleNodeLock {
                             pools.push(pool);
                         }
                         Ok(Err(e)) => {
-                            panic!("CRITICAL: Failed to build pool for SingleNodeLock node {}: {:?}", url, e);
+                            panic!(
+                                "CRITICAL: Failed to build pool for SingleNodeLock node {}: {:?}",
+                                url, e
+                            );
                         }
                         Err(_) => {
-                            panic!("CRITICAL: Timeout connecting to SingleNodeLock cluster node: {}. This compromises CRC16 hash consistency.", url);
+                            panic!(
+                                "CRITICAL: Timeout connecting to SingleNodeLock cluster node: {}. This compromises CRC16 hash consistency.",
+                                url
+                            );
                         }
                     }
                 }
                 Err(e) => {
-                    panic!("CRITICAL: Failed to create connection manager for SingleNodeLock node {}: {:?}", url, e);
+                    panic!(
+                        "CRITICAL: Failed to create connection manager for SingleNodeLock node {}: {:?}",
+                        url, e
+                    );
                 }
             }
         }
@@ -167,7 +176,13 @@ impl SeatLock for SingleNodeLock {
         user_id: i32,
         expires_in_sec: i32,
     ) -> bool {
-        self.acquire_lock(showtime_id, seat_id, user_id, (expires_in_sec as u64) * 1000).await
+        self.acquire_lock(
+            showtime_id,
+            seat_id,
+            user_id,
+            (expires_in_sec as u64) * 1000,
+        )
+        .await
     }
 
     async fn update_seat_metadata_lua(
@@ -181,35 +196,54 @@ impl SeatLock for SingleNodeLock {
         let now = chrono::Utc::now().timestamp();
         let expiry = now + expires_in_sec as i64;
         let processing_expiry = expiry + 15;
-        
+
         let room_zset_key = format!("{{{}}}:locks", showtime_id);
         let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
         let bitmap_key = crate::keys::schedule_seat_bitmap(showtime_id);
         let queue_key = crate::keys::seat_processing_queue_key();
-        
+
         let mut success = true;
         for seat_id in seat_ids {
             let Some(pool) = self.pool_for_seat(showtime_id, seat_id) else {
                 success = false;
                 continue;
             };
-            
+
             let queue_member = serde_json::json!({
                 "seat_id": seat_id,
                 "schedule_id": showtime_id,
                 "user_id": user_id,
-            }).to_string();
-            
+            })
+            .to_string();
+
             let bit_offset = seat_id as usize * 2;
-            
+
             if let Ok(mut cli) = pool.get().await {
                 let mut pipe = redis::pipe();
                 pipe.atomic()
-                    .cmd("ZADD").arg(&room_zset_key).arg(expiry).arg(format!("{}:{}", seat_id, user_id)).ignore()
-                    .cmd("ZADD").arg(&user_zset_key).arg(expiry).arg(seat_id.to_string()).ignore()
-                    .cmd("ZADD").arg(&queue_key).arg(processing_expiry).arg(&queue_member).ignore()
-                    .cmd("BITFIELD").arg(&bitmap_key).arg("SET").arg("u2").arg(bit_offset).arg(1).ignore();
-                
+                    .cmd("ZADD")
+                    .arg(&room_zset_key)
+                    .arg(expiry)
+                    .arg(format!("{}:{}", seat_id, user_id))
+                    .ignore()
+                    .cmd("ZADD")
+                    .arg(&user_zset_key)
+                    .arg(expiry)
+                    .arg(seat_id.to_string())
+                    .ignore()
+                    .cmd("ZADD")
+                    .arg(&queue_key)
+                    .arg(processing_expiry)
+                    .arg(&queue_member)
+                    .ignore()
+                    .cmd("BITFIELD")
+                    .arg(&bitmap_key)
+                    .arg("SET")
+                    .arg("u2")
+                    .arg(bit_offset)
+                    .arg(1)
+                    .ignore();
+
                 let res: redis::RedisResult<()> = pipe.query_async(&mut *cli).await;
                 if res.is_err() {
                     success = false;
@@ -282,10 +316,14 @@ impl SeatLock for SingleNodeLock {
                 .await;
 
             if res.as_ref().ok() == Some(&1) {
-                self.zadd_cluster(&user_zset_key, &seat_id.to_string(), expiry).await;
-                self.zadd_cluster(&room_zset_key, &format!("{}:{}", seat_id, user_id), expiry).await;
-                self.zadd_cluster(&queue_key, &queue_member, processing_expiry).await;
-                self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b01).await;
+                self.zadd_cluster(&user_zset_key, &seat_id.to_string(), expiry)
+                    .await;
+                self.zadd_cluster(&room_zset_key, &format!("{}:{}", seat_id, user_id), expiry)
+                    .await;
+                self.zadd_cluster(&queue_key, &queue_member, processing_expiry)
+                    .await;
+                self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b01)
+                    .await;
                 true
             } else {
                 false
@@ -343,10 +381,13 @@ impl SeatLock for SingleNodeLock {
                 .invoke_async(&mut *cli)
                 .await;
 
-            self.zrem_cluster(&user_zset_key, &seat_id.to_string()).await;
-            self.zrem_cluster(&room_zset_key, &format!("{}:{}", seat_id, user_id)).await;
+            self.zrem_cluster(&user_zset_key, &seat_id.to_string())
+                .await;
+            self.zrem_cluster(&room_zset_key, &format!("{}:{}", seat_id, user_id))
+                .await;
             self.zrem_cluster(&queue_key, queue_member).await;
-            self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b00).await;
+            self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b00)
+                .await;
             matches!(result, Ok(1))
         } else {
             false
@@ -399,17 +440,25 @@ impl SeatLock for SingleNodeLock {
                 .arg(bit_offset)
                 .invoke_async(&mut *cli)
                 .await;
-            
+
             match res {
                 Ok(1) => {
-                    self.zrem_cluster(&user_zset_key, &seat_id.to_string()).await;
-                    self.zrem_cluster(&room_zset_key, &format!("{}:{}", seat_id, user_id)).await;
+                    self.zrem_cluster(&user_zset_key, &seat_id.to_string())
+                        .await;
+                    self.zrem_cluster(&room_zset_key, &format!("{}:{}", seat_id, user_id))
+                        .await;
                     self.zrem_cluster(&queue_key, &queue_member).await;
-                    self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b00).await;
+                    self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b00)
+                        .await;
                     true
                 }
                 Ok(0) => {
-                    tracing::warn!("release_lock returned 0 (owner mismatch). showtime: {}, seat: {}, user: {}", showtime_id, seat_id, user_id);
+                    tracing::warn!(
+                        "release_lock returned 0 (owner mismatch). showtime: {}, seat: {}, user: {}",
+                        showtime_id,
+                        seat_id,
+                        user_id
+                    );
                     false
                 }
                 Ok(v) => {
@@ -426,12 +475,7 @@ impl SeatLock for SingleNodeLock {
         }
     }
 
-    async fn book_seat_lua(
-        &self,
-        showtime_id: i32,
-        seat_id: i32,
-        user_id: i32,
-    ) -> bool {
+    async fn book_seat_lua(&self, showtime_id: i32, seat_id: i32, user_id: i32) -> bool {
         let Some(pool) = self.pool_for_seat(showtime_id, seat_id) else {
             return false;
         };
@@ -476,13 +520,16 @@ impl SeatLock for SingleNodeLock {
                 .arg(bit_offset)
                 .invoke_async(&mut *cli)
                 .await;
-            
+
             match res {
                 Ok(1) => {
-                    self.zrem_cluster(&user_zset_key, &seat_id.to_string()).await;
-                    self.zrem_cluster(&room_zset_key, &format!("{}:{}", seat_id, user_id)).await;
+                    self.zrem_cluster(&user_zset_key, &seat_id.to_string())
+                        .await;
+                    self.zrem_cluster(&room_zset_key, &format!("{}:{}", seat_id, user_id))
+                        .await;
                     self.zrem_cluster(&queue_key, &queue_member).await;
-                    self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b10).await;
+                    self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b10)
+                        .await;
                     true
                 }
                 Ok(0) => false,
@@ -537,10 +584,13 @@ impl SeatLock for SingleNodeLock {
                 .invoke_async(&mut *cli)
                 .await;
 
-            self.zrem_cluster(&user_zset_key, &seat_id.to_string()).await;
-            self.zrem_cluster(&room_zset_key, &format!("{}:{}", seat_id, user_id)).await;
+            self.zrem_cluster(&user_zset_key, &seat_id.to_string())
+                .await;
+            self.zrem_cluster(&room_zset_key, &format!("{}:{}", seat_id, user_id))
+                .await;
             self.zrem_cluster(&queue_key, queue_member).await;
-            self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b10).await;
+            self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b10)
+                .await;
         }
     }
 

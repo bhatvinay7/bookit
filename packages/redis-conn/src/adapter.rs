@@ -175,7 +175,10 @@ impl RedisSocketAdapter {
                             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                             continue;
                         }
-                        if let Err(e) = pubsub_conn.subscribe(crate::keys::global_events_channel()).await {
+                        if let Err(e) = pubsub_conn
+                            .subscribe(crate::keys::global_events_channel())
+                            .await
+                        {
                             tracing::error!("Failed to subscribe to global_events: {:?}", e);
                             tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                             continue;
@@ -191,10 +194,14 @@ impl RedisSocketAdapter {
                                 if let Some(id_str) = channel_name.strip_prefix("room:") {
                                     if let Ok(showtime_id) = id_str.parse::<i32>() {
                                         // Try to parse as a known PubSubEvent for smart routing
-                                        if let Ok(event) = serde_json::from_str::<PubSubEvent>(&payload) {
+                                        if let Ok(event) =
+                                            serde_json::from_str::<PubSubEvent>(&payload)
+                                        {
                                             match event {
                                                 PubSubEvent::SeatLocked {
-                                                    user_id, seat_id, ..
+                                                    user_id,
+                                                    seat_id,
+                                                    ..
                                                 } => {
                                                     let notify = serde_json::json!({
                                                         "event": "seat_locked",
@@ -203,7 +210,10 @@ impl RedisSocketAdapter {
                                                         "user_id": user_id,
                                                     })
                                                     .to_string();
-                                                    adapter.broadcast_to_room_local(showtime_id, &notify);
+                                                    adapter.broadcast_to_room_local(
+                                                        showtime_id,
+                                                        &notify,
+                                                    );
                                                 }
                                                 PubSubEvent::SeatUnlocked { seat_id, .. } => {
                                                     let notify = serde_json::json!({
@@ -212,11 +222,17 @@ impl RedisSocketAdapter {
                                                         "showtime_id": showtime_id,
                                                     })
                                                     .to_string();
-                                                    adapter.broadcast_to_room_local(showtime_id, &notify);
+                                                    adapter.broadcast_to_room_local(
+                                                        showtime_id,
+                                                        &notify,
+                                                    );
                                                 }
                                                 _ => {
                                                     // For all other room events broadcast as-is
-                                                    adapter.broadcast_to_room_local(showtime_id, &payload);
+                                                    adapter.broadcast_to_room_local(
+                                                        showtime_id,
+                                                        &payload,
+                                                    );
                                                 }
                                             }
                                         } else {
@@ -224,7 +240,8 @@ impl RedisSocketAdapter {
                                         }
                                     }
                                 } else if channel_name == crate::keys::global_events_channel() {
-                                    if let Ok(event) = serde_json::from_str::<PubSubEvent>(&payload) {
+                                    if let Ok(event) = serde_json::from_str::<PubSubEvent>(&payload)
+                                    {
                                         match event {
                                             PubSubEvent::LockSlotsResponse {
                                                 user_id,
@@ -241,7 +258,8 @@ impl RedisSocketAdapter {
                                                     "failed_seat_ids": failed_seat_ids,
                                                 })
                                                 .to_string();
-                                                adapter.send_to_user_local(user_id, &response_payload);
+                                                adapter
+                                                    .send_to_user_local(user_id, &response_payload);
                                             }
                                             PubSubEvent::Register { .. }
                                             | PubSubEvent::Disconnect { .. } => {}
