@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use axum::{
     body::Body,
-    extract::{State, OriginalUri},
+    extract::{OriginalUri, State},
     http::{
         HeaderMap, Method, StatusCode, Uri,
         header::{CONNECTION, HOST, TRANSFER_ENCODING},
@@ -15,10 +15,9 @@ use tracing::{error, warn};
 use crate::{AppState, circuit_breaker::RedisCircuitBreaker};
 
 use axum::extract::Query;
-use std::collections::HashMap;
-use bookit_proto::search::search_service_client::SearchServiceClient;
 use bookit_proto::search::SearchRequest;
-use tonic::transport::Channel;
+use bookit_proto::search::search_service_client::SearchServiceClient;
+use std::collections::HashMap;
 
 pub async fn proxy_to_search_server(
     State(state): State<Arc<AppState>>,
@@ -29,25 +28,19 @@ pub async fn proxy_to_search_server(
     }
 
     let query = params.get("q").cloned().unwrap_or_default();
-    
-    // Connect to Search Server via gRPC
-    let grpc_url = format!("http://{}", state.search_server_url.trim_start_matches("http://").trim_end_matches(":8084"));
-    let grpc_url = format!("{}:50051", grpc_url.split(':').next().unwrap_or("search-server"));
-    
-    // Normally you'd keep a persistent client in state, but for simplicity we'll connect per request
-    // or use the grpc URL provided in ENV
-    let grpc_url = std::env::var("SEARCH_SERVER_GRPC_URL").unwrap_or_else(|_| "http://127.0.0.1:50051".to_string());
-    
-    let mut client = match SearchServiceClient::connect(grpc_url).await {
-        Ok(c) => c,
-        Err(err) => {
-            error!(error = %err, "Failed to connect to SearchService gRPC");
-            state.circuit_breaker.record_failure("search-server").await;
-            return RedisCircuitBreaker::service_busy_response();
-        }
-    };
+    let city = params.get("city").cloned().unwrap_or_default();
 
-    let request = tonic::Request::new(SearchRequest { query });
+    let mut client =
+        match SearchServiceClient::connect(state.search_server_grpc_url.as_ref().clone()).await {
+            Ok(c) => c,
+            Err(err) => {
+                error!(error = %err, "Failed to connect to SearchService gRPC");
+                state.circuit_breaker.record_failure("search-server").await;
+                return RedisCircuitBreaker::service_busy_response();
+            }
+        };
+
+    let request = tonic::Request::new(SearchRequest { query, city });
 
     match client.search(request).await {
         Ok(response) => {
@@ -57,7 +50,8 @@ pub async fn proxy_to_search_server(
                 StatusCode::OK,
                 [(axum::http::header::CONTENT_TYPE, "application/json")],
                 results,
-            ).into_response()
+            )
+                .into_response()
         }
         Err(err) => {
             error!(error = %err, "SearchService gRPC call failed");
@@ -150,7 +144,10 @@ async fn proxy_request(
 
             let mut response_builder = Response::builder().status(status);
             for (key, value) in res.headers().iter() {
-                if key != TRANSFER_ENCODING && key != CONNECTION && !key.as_str().to_lowercase().starts_with("access-control-") {
+                if key != TRANSFER_ENCODING
+                    && key != CONNECTION
+                    && !key.as_str().to_lowercase().starts_with("access-control-")
+                {
                     response_builder = response_builder.header(key, value);
                 }
             }
