@@ -1,7 +1,7 @@
-use printpdf::*;
-use printpdf::path::{PaintMode, WindingOrder};
-use std::io::BufWriter;
 use crate::helpers::AppError;
+use printpdf::path::{PaintMode, WindingOrder};
+use printpdf::*;
+use std::io::BufWriter;
 
 pub struct TicketPdfData {
     pub booking_id: String,
@@ -21,7 +21,7 @@ pub fn generate_ticket_pdf(ticket: &TicketPdfData) -> Result<Vec<u8>, AppError> 
         "Layer 1",
     );
     let layer = doc.get_page(page1).get_layer(layer1);
-    
+
     let font_bold = doc
         .add_builtin_font(BuiltinFont::HelveticaBold)
         .map_err(|e| AppError::internal(e.to_string()))?;
@@ -30,9 +30,9 @@ pub fn generate_ticket_pdf(ticket: &TicketPdfData) -> Result<Vec<u8>, AppError> 
         .map_err(|e| AppError::internal(e.to_string()))?;
 
     // Draw header rectangle (Polygon with Fill)
-    let bg_color = Color::Rgb(Rgb::new(0.15, 0.15, 0.2, None)); 
+    let bg_color = Color::Rgb(Rgb::new(0.15, 0.15, 0.2, None));
     layer.set_fill_color(bg_color);
-    
+
     let points = vec![
         (Point::new(Mm(0.0), Mm(297.0)), false),
         (Point::new(Mm(210.0), Mm(297.0)), false),
@@ -47,13 +47,19 @@ pub fn generate_ticket_pdf(ticket: &TicketPdfData) -> Result<Vec<u8>, AppError> 
     layer.add_polygon(poly);
 
     // Write Header Title
-    layer.set_fill_color(Color::Rgb(Rgb::new(1.0, 1.0, 1.0, None))); 
+    layer.set_fill_color(Color::Rgb(Rgb::new(1.0, 1.0, 1.0, None)));
     layer.use_text("BOOKIT - E-TICKET", 24.0, Mm(20.0), Mm(275.0), &font_bold);
-    layer.use_text(format!("Booking ID: {}", ticket.booking_id), 12.0, Mm(20.0), Mm(265.0), &font_regular);
+    layer.use_text(
+        format!("Booking ID: {}", ticket.booking_id),
+        12.0,
+        Mm(20.0),
+        Mm(265.0),
+        &font_regular,
+    );
 
     // Ticket body
-    layer.set_fill_color(Color::Rgb(Rgb::new(0.2, 0.2, 0.2, None))); 
-    
+    layer.set_fill_color(Color::Rgb(Rgb::new(0.2, 0.2, 0.2, None)));
+
     layer.use_text("Show", 10.0, Mm(20.0), Mm(235.0), &font_regular);
     layer.use_text(&ticket.show_title, 18.0, Mm(20.0), Mm(226.0), &font_bold);
 
@@ -67,7 +73,7 @@ pub fn generate_ticket_pdf(ticket: &TicketPdfData) -> Result<Vec<u8>, AppError> 
     // Divider line
     layer.set_outline_thickness(1.0);
     layer.set_outline_color(Color::Rgb(Rgb::new(0.9, 0.9, 0.9, None)));
-    
+
     let line_pts = vec![
         (Point::new(Mm(20.0), Mm(185.0)), false),
         (Point::new(Mm(190.0), Mm(185.0)), false),
@@ -80,11 +86,23 @@ pub fn generate_ticket_pdf(ticket: &TicketPdfData) -> Result<Vec<u8>, AppError> 
 
     layer.set_fill_color(Color::Rgb(Rgb::new(0.2, 0.2, 0.2, None)));
     layer.use_text("Seats", 10.0, Mm(20.0), Mm(170.0), &font_regular);
-    layer.use_text(ticket.seats.join(", "), 14.0, Mm(20.0), Mm(163.0), &font_bold);
-    
+    layer.use_text(
+        ticket.seats.join(", "),
+        14.0,
+        Mm(20.0),
+        Mm(163.0),
+        &font_bold,
+    );
+
     layer.use_text("Total Paid", 10.0, Mm(120.0), Mm(170.0), &font_regular);
-    layer.use_text(format!("Rs. {}", ticket.total_amount), 14.0, Mm(120.0), Mm(163.0), &font_bold);
-    
+    layer.use_text(
+        format!("Rs. {}", ticket.total_amount),
+        14.0,
+        Mm(120.0),
+        Mm(163.0),
+        &font_bold,
+    );
+
     layer.use_text("Status", 10.0, Mm(165.0), Mm(170.0), &font_regular);
     let status_color = if ticket.status.eq_ignore_ascii_case("completed") {
         Color::Rgb(Rgb::new(0.0, 0.6, 0.3, None))
@@ -92,11 +110,23 @@ pub fn generate_ticket_pdf(ticket: &TicketPdfData) -> Result<Vec<u8>, AppError> 
         Color::Rgb(Rgb::new(0.8, 0.4, 0.0, None))
     };
     layer.set_fill_color(status_color);
-    layer.use_text(ticket.status.to_uppercase(), 14.0, Mm(165.0), Mm(163.0), &font_bold);
+    layer.use_text(
+        ticket.status.to_uppercase(),
+        14.0,
+        Mm(165.0),
+        Mm(163.0),
+        &font_bold,
+    );
 
     // Note at the bottom
     layer.set_fill_color(Color::Rgb(Rgb::new(0.5, 0.5, 0.5, None)));
-    layer.use_text("Please present this ticket at the entrance. Valid for one entry only.", 10.0, Mm(20.0), Mm(130.0), &font_regular);
+    layer.use_text(
+        "Please present this ticket at the entrance. Valid for one entry only.",
+        10.0,
+        Mm(20.0),
+        Mm(130.0),
+        &font_regular,
+    );
     layer.use_text("Enjoy the show!", 10.0, Mm(20.0), Mm(125.0), &font_regular);
 
     let mut pdf_bytes = Vec::new();

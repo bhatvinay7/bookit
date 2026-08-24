@@ -1,5 +1,4 @@
-
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 use dotenvy::dotenv;
 use std::env;
 use std::net::SocketAddr;

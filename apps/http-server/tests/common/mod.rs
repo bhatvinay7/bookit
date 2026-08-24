@@ -1,4 +1,4 @@
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 use dotenvy::dotenv;
 use http_server::api;
 use http_server::api::state::AppState;
@@ -48,7 +48,7 @@ pub async fn create_test_app() -> Router {
 /// Return a valid admin JWT for test requests.
 /// Uses the test JWT_SECRET.
 pub fn admin_jwt() -> String {
-    use jsonwebtoken::{encode, EncodingKey, Header};
+    use jsonwebtoken::{EncodingKey, Header, encode};
     use serde::{Deserialize, Serialize};
     #[derive(Serialize, Deserialize)]
     struct C {

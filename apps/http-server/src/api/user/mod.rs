@@ -8,16 +8,18 @@ pub mod tickets;
 use crate::api::state::AppState;
 use crate::middleware::rate_limit::rate_limiter;
 use axum::{
-    middleware,
+    Router, middleware,
     routing::{get, post},
-    Router,
 };
 use std::sync::Arc;
 
 pub fn user_routes(state: Arc<AppState>) -> Router {
     Router::new()
         .route("/payments", post(payments::request_payment))
-        .route("/payments/razorpay-order", post(payments::create_razorpay_order))
+        .route(
+            "/payments/razorpay-order",
+            post(payments::create_razorpay_order),
+        )
         .route(
             "/payments/checkout-summary",
             post(payments::get_checkout_summary),

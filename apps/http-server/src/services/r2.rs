@@ -1,7 +1,7 @@
 use crate::helpers::AppError;
+use aws_sdk_s3::Client as S3Client;
 use aws_sdk_s3::config::{Credentials, Region};
 use aws_sdk_s3::primitives::ByteStream;
-use aws_sdk_s3::Client as S3Client;
 use axum::extract::Multipart;
 use chrono::Utc;
 
@@ -74,13 +74,15 @@ pub async fn upload_pdf_bytes(
     file_name: &str,
 ) -> Result<UploadResult, AppError> {
     let bucket = std::env::var("CLOUDFLARE_R2_BUCKET").unwrap_or_else(|_| "zerocopy".into());
-    let pub_url = std::env::var("CLOUDFLARE_R2_PUBLIC_URL")
-        .unwrap_or_else(|_| "https://thepipe.shop".into());
+    let pub_url =
+        std::env::var("CLOUDFLARE_R2_PUBLIC_URL").unwrap_or_else(|_| "https://thepipe.shop".into());
 
     let key = format!("tickets/{}-{}", Utc::now().timestamp_millis(), file_name);
 
     if std::env::var("APP_MODE").unwrap_or_default() == "test"
-        || std::env::var("CLOUDFLARE_R2_ACCESS_KEY_ID").unwrap_or_default().is_empty()
+        || std::env::var("CLOUDFLARE_R2_ACCESS_KEY_ID")
+            .unwrap_or_default()
+            .is_empty()
     {
         // In test mode or when R2 is unconfigured, return simulated R2 URL
         let url = format!("{}/{}", pub_url.trim_end_matches('/'), key);
@@ -101,4 +103,3 @@ pub async fn upload_pdf_bytes(
     let url = format!("{}/{}", pub_url.trim_end_matches('/'), key);
     Ok(UploadResult { url, key })
 }
-

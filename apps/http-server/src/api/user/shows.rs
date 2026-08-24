@@ -1,11 +1,11 @@
 use crate::services::cache::{get_async_cached, set_async_cached};
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
-use bookit_redis::keys::{CACHE_DASHBOARD_GRID, TTL_DASHBOARD_GRID};
+use bookit_redis::keys::{CACHE_DASHBOARD_GRID, CACHE_SHOWS, TTL_DASHBOARD_GRID, TTL_SHOWS};
 use bson::oid::ObjectId;
 use mongodb::options::FindOptions;
 use serde::{Deserialize, Serialize};
@@ -57,6 +57,10 @@ pub async fn get_show_details(
 pub async fn list_shows(State(state): State<Arc<AppState>>) -> Result<impl IntoResponse, AppError> {
     use futures::stream::StreamExt;
 
+    if let Some(cached) = get_async_cached::<Vec<Show>>(&state, CACHE_SHOWS).await {
+        return Ok((StatusCode::OK, Json(cached)));
+    }
+
     let shows_collection = state
         .mongo_client
         .database(&state.mongo_db_name)
@@ -79,6 +83,8 @@ pub async fn list_shows(State(state): State<Arc<AppState>>) -> Result<impl IntoR
 
     // Sort by created_at desc
     shows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+
+    set_async_cached(&state, CACHE_SHOWS, &shows, TTL_SHOWS).await;
 
     Ok((StatusCode::OK, Json(shows)))
 }
@@ -167,4 +173,3 @@ pub async fn list_shows_grid(
 
     Ok((StatusCode::OK, Json(GridResponse { shows, has_more })))
 }
-

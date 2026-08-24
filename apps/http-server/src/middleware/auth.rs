@@ -1,6 +1,6 @@
 use crate::helpers::{
-    jwt::{decode_token, Claims},
     AppError,
+    jwt::{Claims, decode_token},
 };
 use axum::{
     async_trait, extract::FromRequestParts, http::header::AUTHORIZATION, http::request::Parts,

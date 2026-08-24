@@ -1,17 +1,8 @@
-use axum::{
-    extract::State,
-    http::StatusCode,
-    routing::post,
-    Json, Router,
-};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
-use crate::{
-    api::state::AppState,
-    helpers::AppError,
-    services::r2::upload_pdf_bytes,
-};
+use crate::{api::state::AppState, helpers::AppError, services::r2::upload_pdf_bytes};
 
 pub fn internal_routes(state: Arc<AppState>) -> Router {
     Router::new()

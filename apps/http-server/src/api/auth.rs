@@ -1,23 +1,23 @@
 use axum::{
+    Json, Router,
     extract::State,
     http::StatusCode,
     routing::{get, post},
-    Json, Router,
 };
-use bcrypt::{hash, verify, DEFAULT_COST};
+use bcrypt::{DEFAULT_COST, hash, verify};
 use bookit_db::schema::users::dsl::{email as email_col, users};
 use bookit_db::{
     insertables::NewUser,
     models::{User, UserRole},
 };
 use diesel::prelude::*;
-use jsonwebtoken::{encode, EncodingKey, Header};
+use jsonwebtoken::{EncodingKey, Header, encode};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+use crate::api::admin::password_reset;
 use crate::api::state::AppState;
 use crate::helpers::AppError;
-use crate::api::admin::password_reset;
 
 #[derive(Deserialize)]
 pub struct SignupRequest {
@@ -82,7 +82,7 @@ async fn signup(
             "Please enter a valid email address.",
         ));
     }
-    
+
     if payload.password.len() < 6 {
         return Err(err(
             StatusCode::BAD_REQUEST,

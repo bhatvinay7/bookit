@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use bigdecimal::BigDecimal;
 use chrono::Utc;
@@ -276,7 +276,7 @@ pub async fn create_schedule(
             LayoutSeatClass::Vip => "VIP",
             LayoutSeatClass::Ga => "GA",
         };
-        
+
         let price_str = body
             .prices
             .get(class_key)
@@ -284,7 +284,6 @@ pub async fn create_schedule(
             .map(|s| s.as_str())
             .unwrap_or("0");
         let price = BigDecimal::from_str(price_str).unwrap_or_else(|_| default_price.clone());
-
 
         new_seats.push(NewScheduleSeat {
             schedule_id: schedule.id,
