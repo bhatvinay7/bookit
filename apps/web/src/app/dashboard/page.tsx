@@ -1,10 +1,10 @@
 "use client";
 import { useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useState, useEffect } from "react";
+import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
-import { motion, AnimatePresence } from "framer-motion";
+import { motion } from "framer-motion";
 import { useMovies, useTokenValidator } from "@/hooks/useApi";
-import type { Movie, Show } from "@/types";
+import type { Show } from "@/types";
 import { EmptyState } from "./components/EmptyState";
 import { SidebarStrip } from "./components/SidebarStrip";
 import { HeroBanner } from "./components/HeroBanner";
@@ -22,13 +22,15 @@ function DashboardContent() {
   useTokenValidator();
   const { theme } = useTheme();
   const dark = theme === "dark";
-  const [mounted, setMounted] = useState(false);
-  useEffect(() => setMounted(true), []);
+  const mounted = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
   const handleSelectCategory = (cat: string) => {
     router.push(`/dashboard?category=${cat}`);
   };
 
-  const [selectedShow, setSelectedShow] = useState<Show | null>(null);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [detailModalShow, setDetailModalShow] = useState<Show | null>(null);
 
@@ -37,7 +39,8 @@ function DashboardContent() {
   useEffect(() => {
     const savedCity = sessionStorage.getItem("bookit_city");
     if (savedCity) {
-      setSelectedCity(savedCity);
+      const updateCity = window.setTimeout(() => setSelectedCity(savedCity), 0);
+      return () => window.clearTimeout(updateCity);
     }
   }, []);
 
@@ -62,13 +65,6 @@ function DashboardContent() {
 
   const safeMovies = Array.isArray(movies) ? movies : [];
   
-  // Update selected show if movies are loaded and nothing is selected
-  useEffect(() => {
-    if (safeMovies.length > 0 && !selectedShow) {
-      setSelectedShow(safeMovies[0]);
-    }
-  }, [safeMovies, selectedShow]);
-
   // Filter shows based on Sidebar category
   const filteredShows = safeMovies.filter(m => {
     if (selectedCategory === "All") return true;
@@ -90,7 +86,7 @@ function DashboardContent() {
     <div
       style={{
         minHeight: '100vh',
-        background: dark ? '#020617' : 'linear-gradient(135deg, #f3f4f6 0%, #e0e7ff 50%, #f3e8ff 100%)',
+        background: css('bg'),
         color: css('text-primary'),
         fontFamily: css('font-sans'),
         transition: 'background 0.3s, color 0.3s',
@@ -98,7 +94,6 @@ function DashboardContent() {
       }}
       className="relative overflow-hidden"
     >
-      {/* ════ PREMIUM LIGHT GRADIENTS (Background) ════ */}
       {/* ════ PREMIUM LIGHT GRADIENTS (Background) ════ */}
       {dark && (
         <div 
@@ -119,10 +114,10 @@ function DashboardContent() {
         {/* ════ FULL WIDTH HEADER AREA (ALWAYS VISIBLE) ════ */}
         <div className="w-full z-50 bg-[var(--card-bg)]/80 backdrop-blur-xl border-b border-[var(--border)] sticky top-0 shrink-0">
           {/* TOP HEADER */}
-          <div className="w-full lg:w-[90%] max-w-none mx-auto px-6 md:px-12">
-            <div className="flex items-center justify-between w-full py-4 gap-8">
-              <div className="flex items-center gap-4 shrink-0">
-                <h1 className="text-3xl font-black tracking-tighter" style={{ fontFamily: css('font-display') }}>
+          <div className="mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8">
+            <div className="flex w-full items-center justify-between gap-2 py-3 sm:gap-5 sm:py-4">
+              <div className="flex shrink-0 items-center gap-3">
+                <h1 className="text-2xl font-black tracking-tighter sm:text-3xl" style={{ fontFamily: css('font-display') }}>
                   Book<span className="text-[var(--accent)]">It</span>
                 </h1>
               </div>
@@ -130,7 +125,7 @@ function DashboardContent() {
               {/* SEARCH BAR TRIGGER IN HEADER */}
               <div 
                 onClick={() => setIsSearchOpen(true)}
-                className="flex-1 max-w-xl hidden md:flex items-center bg-[var(--bg-subtle)] border border-[var(--border)] rounded-xl px-4 py-2 hover:border-[var(--accent)]/50 transition-colors cursor-pointer"
+                className="hidden min-h-11 max-w-xl flex-1 cursor-pointer items-center rounded-full border border-[var(--border)] bg-[var(--bg-subtle)] px-4 transition-all hover:border-[var(--accent)]/60 hover:bg-[var(--card-bg)] md:flex"
               >
                 <svg className="w-5 h-5 text-[var(--text-muted)] mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -142,11 +137,11 @@ function DashboardContent() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-4 shrink-0">
-                <div className="hidden sm:block border-r border-[var(--border)] pr-4">
+              <div className="flex shrink-0 items-center gap-1.5 sm:gap-3">
+                <div className="hidden border-r border-[var(--border)] pr-3 sm:block">
                   <CitySelector selectedCity={selectedCity} onSelect={handleCitySelect} />
                 </div>
-                <div className="sm:hidden">
+                <div className="max-w-[136px] sm:hidden">
                   <CitySelector selectedCity={selectedCity} onSelect={handleCitySelect} />
                 </div>
                 <UserNav />
@@ -156,13 +151,10 @@ function DashboardContent() {
 
           {/* CATEGORY NAV (formerly SidebarStrip) */}
           <div className="bg-[var(--bg-subtle)]/50 border-t border-[var(--border)]">
-            <div className="w-full lg:w-[90%] max-w-none mx-auto px-6 md:px-12">
+            <div className="mx-auto w-full max-w-7xl px-3 sm:px-6 lg:px-8">
               <SidebarStrip 
                 selectedCategory={selectedCategory} 
                 onSelectCategory={handleSelectCategory}
-                onOpenSearch={() => setIsSearchOpen(true)}
-                dark={dark} 
-                css={css} 
               />
             </div>
           </div>
@@ -172,7 +164,7 @@ function DashboardContent() {
           <main style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '40px' }}>
             <div style={{ textAlign: 'center' }}>
               <div className="w-12 h-12 mx-auto mb-5 border-4 border-white/10 border-t-[var(--accent)] rounded-full animate-spin" />
-              <h2 style={{ fontFamily: css('font-display'), fontSize: '24px', fontWeight: 600, color: css('text-primary') }}>Loading CineBook...</h2>
+              <h2 style={{ fontFamily: css('font-display'), fontSize: '24px', fontWeight: 600, color: css('text-primary') }}>Loading...</h2>
             </div>
           </main>
         ) : (isError || safeMovies.length === 0) ? (
@@ -184,24 +176,24 @@ function DashboardContent() {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5 }}
-              className="flex-1 flex flex-col pb-20 pt-8 px-6 md:px-12 w-full lg:w-[90%] max-w-none mx-auto"
+              className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-4 pb-16 pt-4 sm:px-6 sm:pb-20 sm:pt-6 lg:px-8"
             >
 
             {/* MOBILE SEARCH BAR TRIGGER */}
             <div 
               onClick={() => setIsSearchOpen(true)}
-              className="md:hidden w-full mb-6 relative group cursor-pointer"
+              className="group relative mb-4 w-full cursor-pointer md:hidden"
             >
-              <div className="relative flex items-center bg-[var(--card-bg)] border border-[var(--border)] rounded-xl px-4 py-3 hover:border-[var(--accent)]/50 transition-colors shadow-sm">
+              <div className="relative flex min-h-12 items-center rounded-full border border-[var(--border)] bg-[var(--card-bg)] px-4 shadow-sm transition-colors hover:border-[var(--accent)]/50">
                 <svg className="w-5 h-5 text-[var(--accent)] mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                 </svg>
-                <span className="text-[var(--text-muted)] text-sm">Search movies...</span>
+                <span className="text-sm text-[var(--text-muted)]">Search movies, sports and events</span>
               </div>
             </div>
 
             {/* HERO BANNER */}
-            <div className="w-full mb-8">
+            <div className="relative left-1/2 mb-8 w-screen -translate-x-1/2 sm:mb-10">
                <HeroBanner
                  shows={filteredShows.slice(0, 5)}
                  onSelect={(s) => setDetailModalShow(s)}
@@ -209,19 +201,15 @@ function DashboardContent() {
             </div>
 
             {/* BENTO GRID SECTIONS */}
-            <div className="w-full mt-4 flex flex-col gap-8">
+            <div className="flex w-full flex-col gap-2">
                <BentoGridSection 
                  title="Current Events" 
                  shows={nowShowing} 
-                 onSelectShow={setSelectedShow} 
-                 css={css}
                />
 
                <BentoGridSection 
                  title="Upcoming Events" 
                  shows={comingSoon} 
-                 onSelectShow={setSelectedShow} 
-                 css={css}
                />
             </div>
           </motion.div>

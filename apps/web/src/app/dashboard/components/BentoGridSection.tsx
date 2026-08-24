@@ -1,77 +1,46 @@
 import React from "react";
-import { motion } from "framer-motion";
 import type { Show } from "@/types";
-import { ChevronRight } from "lucide-react";
 import Link from "next/link";
+import ShowCard from "@/components/shows/ShowCard";
 
 interface BentoGridSectionProps {
   title: string;
   shows: Show[];
-  onSelectShow: (show: Show) => void;
-  css: (v: string) => string;
 }
 
-export function BentoGridSection({ title, shows, onSelectShow, css }: BentoGridSectionProps) {
+export function BentoGridSection({ title, shows }: BentoGridSectionProps) {
   if (shows.length === 0) return null;
 
   return (
-    <div style={{ marginBottom: "40px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "16px" }}>
-        <h2 style={{ fontFamily: css('font-display'), fontSize: "24px", fontWeight: 800, color: css('text-primary') }}>
-          {title}
-        </h2>
+    <section className="mb-8 sm:mb-12">
+      <div className="mb-5 flex items-end justify-between gap-4 sm:mb-6">
+        <div>
+          <p className="mb-1 text-[10px] font-extrabold uppercase tracking-[0.2em] text-[var(--accent)] sm:text-xs">
+            Curated for you
+          </p>
+          <div className="flex items-baseline gap-2.5">
+            <h2 className="font-display text-2xl font-black tracking-tight text-[var(--text-primary)] sm:text-3xl">
+              {title}
+            </h2>
+            <span className="text-xs font-bold text-[var(--text-muted)]">{shows.length}</span>
+          </div>
+        </div>
+        <Link
+          href="/shows"
+          className="shrink-0 rounded-full border border-[var(--border)] bg-[var(--card-bg)] px-3 py-1.5 text-xs font-bold text-[var(--text-secondary)] transition-colors hover:border-[var(--accent)] hover:text-[var(--accent)] sm:px-4 sm:py-2 sm:text-sm"
+        >
+          View all
+        </Link>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-12">
+      <div className="grid grid-cols-2 gap-x-3 gap-y-7 sm:gap-x-5 sm:gap-y-9 md:grid-cols-3 lg:grid-cols-4 xl:gap-x-6">
         {shows.map((show, idx) => {
-          const key = typeof show.id === "string" ? show.id : show._id?.$oid || Math.random().toString();
+          const key = typeof show.id === "string" ? show.id : show._id?.$oid || `${show.title}-${idx}`;
           return (
-            <motion.div
-              key={key}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: (idx % 10) * 0.05 }}
-              className="group relative flex flex-col"
-            >
-              <Link href={`/shows/${key}`} className="flex flex-col h-full">
-                {/* Image Container */}
-                <div className="relative aspect-square overflow-hidden bg-[var(--bg-subtle)] rounded-2xl mb-5">
-                  {/* Rating Badge */}
-                  {show.score ? (
-                    <div className="absolute top-4 left-4 z-10">
-                      <span className="bg-[#facc15] text-[#1a1a1a] text-xs font-bold px-4 py-1.5 rounded-full uppercase tracking-wide shadow-sm">
-                        Rating {(show.score).toFixed(1)}/10
-                      </span>
-                    </div>
-                  ) : (
-                    <div className="absolute top-4 left-4 z-10">
-                      <span className="bg-[#facc15] text-[#1a1a1a] text-xs font-bold px-4 py-1.5 rounded-full uppercase tracking-wide shadow-sm">
-                        {show.show_type || "Event"}
-                      </span>
-                    </div>
-                  )}
-                  
-                  <img
-                    src={show.poster_url || show.backdrop_url || '/placeholder.jpg'}
-                    alt={show.title}
-                    className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                  />
-                </div>
-                
-                {/* Text Content */}
-                <div className="flex flex-col gap-2">
-                  <h3 className="text-xl md:text-2xl font-bold text-[var(--text-primary)] font-display leading-tight line-clamp-2 group-hover:text-[var(--accent)] transition-colors">
-                    {show.title}
-                  </h3>
-                  <p className="text-[var(--text-secondary)] text-sm md:text-base leading-relaxed line-clamp-2">
-                    {show.description || `Experience this incredible ${(show.show_type || "event").toLowerCase()}.`}
-                  </p>
-                </div>
-              </Link>
-            </motion.div>
+            <ShowCard key={key} show={show} index={idx} />
           );
         })}
       </div>
-    </div>
+    </section>
   );
 }

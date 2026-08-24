@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { MapPin, Building2, Map, Castle, Landmark, Tent, Mountain, ChevronDown, X } from "lucide-react";
 import { useCities } from "@/hooks/useApi";
@@ -25,41 +25,40 @@ export function CitySelector({ selectedCity, onSelect }: CitySelectorProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [showAll, setShowAll] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const mounted = useSyncExternalStore(
+    () => () => undefined,
+    () => true,
+    () => false,
+  );
   const { data: cities, isLoading } = useCities();
 
   const safeCities = Array.isArray(cities) ? cities : [];
 
   // Popular cities are those that have an icon mapping and exist in the fetched cities
   const popularCities = safeCities.filter(c => Object.keys(CITY_ICONS).some(k => k.toLowerCase() === c.toLowerCase())).slice(0, 8);
-  const otherCities = safeCities.filter(c => !popularCities.includes(c));
-
-  // Reset state when opening
-  useEffect(() => {
-    setMounted(true);
-    if (isOpen) {
-      setSearchQuery("");
-      setShowAll(false);
-    }
-  }, [isOpen]);
+  const openSelector = () => {
+    setSearchQuery("");
+    setShowAll(false);
+    setIsOpen(true);
+  };
 
   const filteredCities = safeCities.filter(c => c.toLowerCase().includes(searchQuery.toLowerCase()));
 
   return (
     <>
       <button
-        onClick={() => setIsOpen(true)}
-        className="flex items-center gap-2 px-3 py-1.5 rounded-lg hover:bg-[var(--bg-subtle)] transition-colors text-sm font-semibold border border-transparent hover:border-[var(--border)] text-[var(--text-primary)]"
+        onClick={openSelector}
+        className="flex max-w-full items-center gap-1.5 rounded-lg border border-transparent px-2 py-1.5 text-sm font-semibold text-[var(--text-primary)] transition-colors hover:border-[var(--border)] hover:bg-[var(--bg-subtle)] sm:gap-2 sm:px-3"
       >
-        <MapPin className="w-4 h-4 text-[var(--accent)]" />
-        {selectedCity === "All" ? "Select City" : selectedCity}
-        <ChevronDown className="w-4 h-4 opacity-50" />
+        <MapPin className="h-4 w-4 shrink-0 text-[var(--accent)]" />
+        <span className="truncate">{selectedCity === "All" ? "Select City" : selectedCity}</span>
+        <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
       </button>
 
       {mounted && createPortal(
         <AnimatePresence>
           {isOpen && (
-            <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+            <div className="fixed inset-0 z-[9999] flex items-end justify-center sm:items-center sm:p-4">
               <motion.div
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
@@ -72,7 +71,7 @@ export function CitySelector({ selectedCity, onSelect }: CitySelectorProps) {
                 initial={{ opacity: 0, scale: 0.95, y: 20 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                className="relative w-full max-w-3xl bg-[var(--card-bg)] border border-[var(--border)] rounded-2xl shadow-2xl flex flex-col max-h-[85vh] overflow-hidden"
+                className="relative flex max-h-[90vh] w-full max-w-3xl flex-col overflow-hidden rounded-t-3xl border border-[var(--border)] bg-[var(--card-bg)] shadow-2xl sm:max-h-[85vh] sm:rounded-2xl"
               >
                 {/* Header */}
                 <div className="p-4 sm:p-6 border-b border-[var(--divider)] flex items-center justify-between">
@@ -169,7 +168,7 @@ export function CitySelector({ selectedCity, onSelect }: CitySelectorProps) {
                               ))
                             ) : (
                               <div className="col-span-full py-8 text-center text-[var(--text-muted)] font-medium">
-                                No cities found matching "{searchQuery}"
+                                No cities found matching &quot;{searchQuery}&quot;
                               </div>
                             )}
                           </div>

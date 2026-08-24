@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { UserNav } from "@/components/UserNav";
-import { ChevronRight } from "lucide-react";
+import { ArrowLeft, CalendarDays, Sparkles } from "lucide-react";
+import ShowCard from "@/components/shows/ShowCard";
 import type { Show } from "@/types/show";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
@@ -60,7 +61,31 @@ export default function PublicShowsPage() {
   };
 
   useEffect(() => {
-    fetchShows(1);
+    let cancelled = false;
+
+    fetch(`${API_URL}/api/user/shows/grid?page=1&limit=30`)
+      .then((response) => {
+        if (!response.ok) throw new Error("Failed to fetch shows");
+        return response.json();
+      })
+      .then((data) => {
+        if (cancelled) return;
+        setShows(data.shows);
+        setHasMore(data.has_more);
+        setPage(1);
+      })
+      .catch((requestError: unknown) => {
+        if (!cancelled) {
+          setError(requestError instanceof Error ? requestError.message : String(requestError));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const filteredShows = shows.filter(s => 
@@ -68,42 +93,63 @@ export default function PublicShowsPage() {
   );
 
   return (
-    <div className="min-h-screen bg-[var(--bg)] text-[var(--text-primary)] font-sans">
-      <nav className="w-full px-4 sm:px-8 py-4 flex items-center justify-between z-50 bg-[var(--nav-bg)] backdrop-blur-xl border-b border-[var(--divider)] shadow-sm">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-[var(--accent)] to-yellow-400 flex items-center justify-center">
-            <span className="text-[#12111a] font-bold text-lg leading-none mt-[-2px]">B</span>
+    <div className="relative min-h-screen overflow-hidden bg-[var(--bg)] font-sans text-[var(--text-primary)]">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_0%,rgba(224,150,0,0.09),transparent_32%),radial-gradient(circle_at_90%_18%,rgba(59,130,246,0.08),transparent_30%)]" />
+
+      <nav className="sticky top-0 z-50 border-b border-[var(--divider)] bg-[var(--nav-bg)] backdrop-blur-xl">
+        <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between gap-4 px-4 sm:px-6 lg:px-8">
+          <div className="flex items-center gap-4 sm:gap-6">
+            <Link href="/dashboard" className="font-display text-2xl font-black tracking-tighter">
+              Book<span className="text-[var(--accent)]">It</span>
+            </Link>
+            <Link
+              href="/dashboard"
+              className="hidden items-center gap-1.5 text-sm font-bold text-[var(--text-secondary)] transition-colors hover:text-[var(--accent)] sm:flex"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Discover
+            </Link>
           </div>
-          <span className="text-xl font-black tracking-tight text-white font-display">BookIt</span>
-        </Link>
-        <UserNav />
+          <UserNav />
+        </div>
       </nav>
 
-      <main className="w-full lg:w-[90%] max-w-none mx-auto px-6 md:px-12 py-12">
+      <main className="relative mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 sm:py-12 lg:px-8">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          className="mb-12 flex flex-col md:flex-row justify-between items-start md:items-end"
+          className="relative mb-8 overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--card-bg)] px-5 py-7 shadow-[var(--card-shadow)] sm:mb-10 sm:px-8 sm:py-10 lg:px-12"
         >
-          <div>
-            <h1 className="text-4xl md:text-5xl font-black font-display tracking-tight mb-4">
-              Now <span className="text-transparent bg-clip-text bg-gradient-to-r from-[var(--accent)] to-yellow-400">Showing</span>
+          <div className="pointer-events-none absolute -right-12 -top-20 h-56 w-56 rounded-full bg-[var(--accent)]/10 blur-3xl" />
+          <div className="relative max-w-3xl">
+            <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-[var(--accent)]/25 bg-[var(--accent-bg)] px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-[var(--accent-text)] sm:text-xs">
+              <Sparkles className="h-3.5 w-3.5" />
+              Explore what&apos;s on
+            </div>
+            <h1 className="mb-3 font-display text-3xl font-black tracking-[-0.035em] sm:text-5xl lg:text-6xl">
+              Find your next <span className="text-[var(--accent)]">great experience.</span>
             </h1>
-            <p className="text-[var(--text-secondary)] text-lg max-w-2xl">
-              Book tickets for the latest movies, premium concerts, and exclusive events. Experience entertainment like never before.
+            <p className="max-w-2xl text-sm leading-relaxed text-[var(--text-secondary)] sm:text-lg">
+              Browse movies, concerts, sports and live events, then choose a date and reserve your seats in a few taps.
             </p>
+            {!loading && !error && (
+              <div className="mt-5 flex items-center gap-2 text-xs font-bold text-[var(--text-muted)] sm:text-sm">
+                <CalendarDays className="h-4 w-4 text-[var(--accent)]" />
+                {filteredShows.length} {filteredShows.length === 1 ? "show" : "shows"} available
+              </div>
+            )}
           </div>
         </motion.div>
 
         {/* Categories Filter */}
         {categories.length > 0 && (
-          <div className="flex flex-wrap gap-3 mb-10">
+          <div className="no-scroll-bar -mx-4 mb-7 flex snap-x gap-2 overflow-x-auto px-4 pb-1 sm:mx-0 sm:mb-10 sm:px-0">
             <button
               onClick={() => setSelectedCategory(null)}
-              className={`px-5 py-2 rounded-full text-sm font-semibold transition-all ${
+              className={`min-h-10 shrink-0 snap-start rounded-full border px-4 py-2 text-xs font-bold transition-all sm:px-5 sm:text-sm ${
                 !selectedCategory 
-                  ? "bg-[var(--accent)] text-black shadow-lg shadow-[var(--accent)]/20" 
-                  : "bg-[var(--card-bg)] text-[var(--text-secondary)] border border-[var(--border)] hover:border-[var(--accent)]/50 hover:text-[var(--text-primary)]"
+                  ? "border-[var(--accent)] bg-[var(--accent)] text-slate-950 shadow-lg shadow-[var(--accent)]/15"
+                  : "border-[var(--border)] bg-[var(--card-bg)] text-[var(--text-secondary)] hover:border-[var(--accent)]/50 hover:text-[var(--text-primary)]"
               }`}
             >
               All Shows
@@ -112,10 +158,10 @@ export default function PublicShowsPage() {
               <button
                 key={c.id}
                 onClick={() => setSelectedCategory(c.id)}
-                className={`px-5 py-2 rounded-full text-sm font-semibold transition-all ${
+                className={`min-h-10 shrink-0 snap-start rounded-full border px-4 py-2 text-xs font-bold transition-all sm:px-5 sm:text-sm ${
                   selectedCategory === c.id 
-                    ? "bg-[var(--accent)] text-black shadow-lg shadow-[var(--accent)]/20" 
-                    : "bg-[var(--card-bg)] text-[var(--text-secondary)] border border-[var(--border)] hover:border-[var(--accent)]/50 hover:text-[var(--text-primary)]"
+                    ? "border-[var(--accent)] bg-[var(--accent)] text-slate-950 shadow-lg shadow-[var(--accent)]/15"
+                    : "border-[var(--border)] bg-[var(--card-bg)] text-[var(--text-secondary)] hover:border-[var(--accent)]/50 hover:text-[var(--text-primary)]"
                 }`}
               >
                 {c.name}
@@ -125,79 +171,42 @@ export default function PublicShowsPage() {
         )}
 
         {loading && page === 1 ? (
-          <div className="flex justify-center py-20">
-            <div className="w-12 h-12 rounded-full border-4 border-[var(--accent)] border-t-transparent animate-spin" />
+          <div className="grid grid-cols-2 gap-x-3 gap-y-7 sm:gap-x-5 sm:gap-y-9 md:grid-cols-3 lg:grid-cols-4 xl:gap-x-6" aria-label="Loading shows">
+            {Array.from({ length: 8 }).map((_, index) => (
+              <div key={index} className="animate-pulse">
+                <div className="aspect-[2/3] rounded-2xl border border-[var(--border)] bg-[var(--bg-subtle)]" />
+                <div className="mt-3 h-3 w-2/3 rounded bg-[var(--bg-subtle)]" />
+              </div>
+            ))}
           </div>
         ) : error ? (
-          <div className="text-red-500 bg-red-500/10 p-4 rounded-xl border border-red-500/20">{error}</div>
+          <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-5 text-sm font-semibold text-red-500">{error}</div>
         ) : filteredShows.length === 0 ? (
-          <div className="text-center py-20 bg-[var(--card-bg)] rounded-2xl border border-[var(--border)]">
-            <h2 className="text-2xl font-bold text-[var(--text-secondary)]">No upcoming shows right now.</h2>
+          <div className="rounded-3xl border border-dashed border-[var(--border)] bg-[var(--card-bg)] px-5 py-16 text-center sm:py-20">
+            <h2 className="font-display text-xl font-bold text-[var(--text-primary)] sm:text-2xl">No shows in this category</h2>
+            <p className="mt-2 text-sm text-[var(--text-secondary)]">Try another category to see what&apos;s available.</p>
+            <button onClick={() => setSelectedCategory(null)} className="mt-5 rounded-full bg-[var(--accent)] px-5 py-2.5 text-sm font-bold text-slate-950">
+              Browse all shows
+            </button>
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-12">
-              {filteredShows.map((show, idx) => {
-                return (
-                  <motion.div
-                    key={show.id || (typeof show._id === 'object' && show._id !== null ? show._id.$oid : show._id) || idx}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: (idx % 10) * 0.05 }}
-                    className="group relative flex flex-col"
-                  >
-                    <Link href={`/shows/${show.id}`} className="flex flex-col h-full">
-                      {/* Image Container */}
-                      <div className="relative aspect-square overflow-hidden bg-[var(--bg-subtle)] rounded-2xl mb-5">
-                        {/* Rating Badge */}
-                        {show.score ? (
-                          <div className="absolute top-4 left-4 z-10">
-                            <span className="bg-[#facc15] text-[#1a1a1a] text-xs font-bold px-4 py-1.5 rounded-full uppercase tracking-wide shadow-sm">
-                              Rating {(show.score).toFixed(1)}/10
-                            </span>
-                          </div>
-                        ) : (
-                          <div className="absolute top-4 left-4 z-10">
-                            <span className="bg-[#facc15] text-[#1a1a1a] text-xs font-bold px-4 py-1.5 rounded-full uppercase tracking-wide shadow-sm">
-                              {show.show_type}
-                            </span>
-                          </div>
-                        )}
-                        
-                        {show.backdrop_url || show.poster_url ? (
-                          <img
-                            src={show.poster_url || show.backdrop_url}
-                            alt={show.title}
-                            className="w-full h-full object-cover transition-transform duration-700 group-hover:scale-105"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)]">
-                            No Image
-                          </div>
-                        )}
-                      </div>
-                      
-                      {/* Text Content */}
-                      <div className="flex flex-col gap-2">
-                        <h3 className="text-xl md:text-2xl font-bold text-[var(--text-primary)] font-display leading-tight line-clamp-2 group-hover:text-[var(--accent)] transition-colors">
-                          {show.title}
-                        </h3>
-                        <p className="text-[var(--text-secondary)] text-sm md:text-base leading-relaxed line-clamp-2">
-                          {show.description || `Experience this incredible ${show.show_type.toLowerCase()} event.`}
-                        </p>
-                      </div>
-                    </Link>
-                  </motion.div>
-                );
-              })}
+            <div className="grid grid-cols-2 gap-x-3 gap-y-7 sm:gap-x-5 sm:gap-y-9 md:grid-cols-3 lg:grid-cols-4 xl:gap-x-6">
+              {filteredShows.map((show, index) => (
+                <ShowCard
+                  key={show.id || show._id?.$oid || index}
+                  show={show}
+                  index={index}
+                />
+              ))}
             </div>
 
             {hasMore && (
-              <div className="mt-12 flex justify-center">
+              <div className="mt-10 flex justify-center sm:mt-14">
                 <button
                   onClick={() => fetchShows(page + 1, true)}
                   disabled={loadingMore}
-                  className="px-8 py-3 rounded-full font-bold bg-[var(--card-bg)] text-[var(--text-primary)] border border-[var(--border)] hover:border-[var(--accent)] transition-all flex items-center gap-2"
+                  className="flex min-h-12 items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--card-bg)] px-7 py-3 text-sm font-bold text-[var(--text-primary)] shadow-sm transition-all hover:-translate-y-0.5 hover:border-[var(--accent)] disabled:cursor-wait disabled:opacity-70"
                 >
                   {loadingMore ? (
                     <>
