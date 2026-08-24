@@ -5,10 +5,22 @@ services:
       dockerfile: apps/gateway-keeper/Dockerfile
     env_file:
       - apps/gateway-keeper/.env
+    environment:
+      HTTP_SERVER_URL: http://http-server:8082
+      SEARCH_SERVER_GRPC_URL: http://search-server:50051
+      GATEWAY_KEEPER_GRPC_ADDR: 0.0.0.0:50052
     ports:
       - "8080:8080"
       - "50052:50052"
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    depends_on:
+      - http-server
+      - search-server
 
   lock-server:
     build:
@@ -17,6 +29,11 @@ services:
     env_file:
       - apps/lock-server/.env
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
 
   ws-server:
     build:
@@ -24,9 +41,18 @@ services:
       dockerfile: apps/ws-server/Dockerfile
     env_file:
       - apps/ws-server/.env
+    environment:
+      GATEWAY_KEEPER_GRPC_URL: http://gateway-keeper:50052
     ports:
       - "8081:8081"
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
+    depends_on:
+      - gateway-keeper
 
   http-server:
     build:
@@ -37,6 +63,11 @@ services:
     ports:
       - "8082:8082"
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
 
   search-server:
     build:
@@ -44,9 +75,16 @@ services:
       dockerfile: apps/search-server/Dockerfile
     env_file:
       - apps/search-server/.env
+    environment:
+      ELASTICSEARCH_URL: http://elasticsearch:9200
     ports:
       - "8084:8084"
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
     depends_on:
       - elasticsearch
 
@@ -60,6 +98,11 @@ services:
       - "9200:9200"
       - "9300:9300"
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 1G
 
   payment-processor:
     build:
@@ -68,6 +111,11 @@ services:
     env_file:
       - apps/payment-processor/.env
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M
 
   cdc-worker:
     build:
@@ -76,6 +124,11 @@ services:
     env_file:
       - apps/cdc-worker/.env
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
 
   notification-worker:
     build:
@@ -84,6 +137,11 @@ services:
     env_file:
       - apps/notification-worker/.env
     restart: always
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
 
   # web:
   #   build:
@@ -94,3 +152,8 @@ services:
   #   ports:
   #     - "3000:3000"
   #   restart: always
+  #   deploy:
+  #     resources:
+  #       limits:
+  #         cpus: "0.50"
+  #         memory: 512M
