@@ -332,4 +332,3 @@ pub struct NewOutboxEvent {
     pub published_at: Option<DateTime<Utc>>,
     pub attempts: i32,
 }
-
