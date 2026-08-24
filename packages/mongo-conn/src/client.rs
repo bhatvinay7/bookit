@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use mongodb::{options::ClientOptions, Client};
+use mongodb::{Client, options::ClientOptions};
 use std::env;
 
 /// Shared alias — wrap in Arc in AppState

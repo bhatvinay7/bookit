@@ -5,8 +5,7 @@ use tracing::{error, info};
 
 /// Connects to RabbitMQ with exponential backoff retries.
 pub async fn connect_with_retry() -> lapin::Result<Connection> {
-    let amqp_url =
-        std::env::var("RABBITMQ_URL").expect("RABBITMQ_URL must be set");
+    let amqp_url = std::env::var("RABBITMQ_URL").expect("RABBITMQ_URL must be set");
 
     let retry_strategy = ExponentialBackoff::from_millis(100)
         .max_delay(Duration::from_secs(10)) // max 10 second delay between retries
