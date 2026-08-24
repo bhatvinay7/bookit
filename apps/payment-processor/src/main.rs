@@ -5,9 +5,9 @@ use bookit_db::db::create_db_pool;
 use dotenvy::dotenv;
 use lapin::types::AMQPValue;
 use lapin::{
+    ExchangeKind,
     options::{BasicConsumeOptions, ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions},
     types::FieldTable,
-    ExchangeKind,
 };
 use redis_conn::{establish_pool, establish_seat_lock};
 use rmq_conn::connect_with_retry;
@@ -26,7 +26,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Connect to PostgreSQL and Redis cluster
     let db_pool = create_db_pool();
     let redis_pool = establish_pool().await?;
-    let seat_lock = establish_seat_lock().await.expect("Failed to connect to Redis cluster");
+    let seat_lock = establish_seat_lock()
+        .await
+        .expect("Failed to connect to Redis cluster");
 
     // 2. RabbitMQ Connection
     let amqp_conn = connect_with_retry().await.expect("RMQ connect failed");

@@ -3,27 +3,24 @@ use chrono::Utc;
 use diesel::prelude::*;
 use futures::StreamExt;
 use lapin::{
-    options::{BasicAckOptions, BasicNackOptions, BasicPublishOptions},
     BasicProperties, Channel, Consumer,
+    options::{BasicAckOptions, BasicNackOptions, BasicPublishOptions},
 };
 use serde_json::json;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::payment::process_razorpay_refund;
 use bookit_db::{
     db::DbPool,
     models::{NewOrder, NewOutboxEvent, NewUserAudit, SeatStatus},
     schema::{
-        orders::dsl as od,
-        outbox_events::dsl as oe,
-        schedule_seats::dsl as ss,
-        tickets::dsl as tk,
+        orders::dsl as od, outbox_events::dsl as oe, schedule_seats::dsl as ss, tickets::dsl as tk,
         user_audits::dsl as ua,
     },
 };
 use redis_conn::{RedisPool, SeatLock};
-use crate::payment::process_razorpay_refund;
 
 fn parse_seat_ids(payload: &serde_json::Value) -> Vec<i32> {
     if let Some(arr) = payload["seat_ids"].as_array() {
@@ -49,9 +46,7 @@ pub async fn process_messages(
     while let Some(delivery) = consumer.next().await {
         if let Ok(delivery) = delivery {
             if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&delivery.data) {
-                let request_type = payload["request_type"]
-                    .as_str()
-                    .unwrap_or("checkout");
+                let request_type = payload["request_type"].as_str().unwrap_or("checkout");
 
                 if request_type == "cancellation" {
                     // ── Handle Cancellation Request ─────────────────────────────
@@ -82,9 +77,11 @@ pub async fn process_messages(
 
                     // Process Refund with Razorpay
                     if let Some(ref payment_id) = razorpay_payment_id {
-                        let amount_bd = BigDecimal::from_str(amount_str).unwrap_or(BigDecimal::from(0));
+                        let amount_bd =
+                            BigDecimal::from_str(amount_str).unwrap_or(BigDecimal::from(0));
                         // amount in paise = amount * 100
-                        let amount_paise = (amount_bd.to_string().parse::<f64>().unwrap_or(0.0) * 100.0) as i64;
+                        let amount_paise =
+                            (amount_bd.to_string().parse::<f64>().unwrap_or(0.0) * 100.0) as i64;
                         if let Err(e) = process_razorpay_refund(payment_id, amount_paise).await {
                             println!("Refund processing failed: {:?}", e);
                             let _ = delivery
@@ -105,11 +102,9 @@ pub async fn process_messages(
                         };
                         db_conn.transaction(|conn| {
                             // 1. Revert seat status to Available
-                            diesel::update(
-                                ss::schedule_seats.filter(ss::id.eq_any(&seat_ids)),
-                            )
-                            .set(ss::status.eq(SeatStatus::Available))
-                            .execute(conn)?;
+                            diesel::update(ss::schedule_seats.filter(ss::id.eq_any(&seat_ids)))
+                                .set(ss::status.eq(SeatStatus::Available))
+                                .execute(conn)?;
 
                             // 2. Update order status to refunded
                             diesel::update(od::orders.filter(od::id.eq(order_uuid)))
@@ -127,7 +122,8 @@ pub async fn process_messages(
                                 user_id: user_id_val,
                                 action: "ticket_cancelled".into(),
                                 order_id: order_uuid,
-                                amount: BigDecimal::from_str(amount_str).unwrap_or(BigDecimal::from(0)),
+                                amount: BigDecimal::from_str(amount_str)
+                                    .unwrap_or(BigDecimal::from(0)),
                                 details: json!({ "seat_ids": seat_ids }),
                             };
                             diesel::insert_into(ua::user_audits)
@@ -190,7 +186,10 @@ pub async fn process_messages(
                                 "user_id": user_id_val
                             })
                             .to_string();
-                            let _: () = redis::AsyncCommands::publish(&mut *cli, channel_name, event_msg).await.unwrap_or(());
+                            let _: () =
+                                redis::AsyncCommands::publish(&mut *cli, channel_name, event_msg)
+                                    .await
+                                    .unwrap_or(());
                         }
 
                         let _ = delivery.ack(BasicAckOptions::default()).await;
@@ -245,7 +244,10 @@ pub async fn process_messages(
                     for &seat_id in &seat_ids {
                         let owner = seat_lock.get_lock_owner(schedule_id_val, seat_id).await;
                         if owner != Some(user_id_val) {
-                            println!("Lock expired or invalid for seat {}! Sending to DLQ.", seat_id);
+                            println!(
+                                "Lock expired or invalid for seat {}! Sending to DLQ.",
+                                seat_id
+                            );
                             all_locked = false;
                             break;
                         }
@@ -271,11 +273,9 @@ pub async fn process_messages(
                         };
                         db_conn.transaction(|conn| {
                             // 1. Update seats to Booked
-                            diesel::update(
-                                ss::schedule_seats.filter(ss::id.eq_any(&seat_ids)),
-                            )
-                            .set(ss::status.eq(SeatStatus::Booked))
-                            .execute(conn)?;
+                            diesel::update(ss::schedule_seats.filter(ss::id.eq_any(&seat_ids)))
+                                .set(ss::status.eq(SeatStatus::Booked))
+                                .execute(conn)?;
 
                             // 2. Create Order
                             let order = NewOrder {
@@ -340,7 +340,7 @@ pub async fn process_messages(
                             seat_lock
                                 .release_lock(schedule_id_val, seat_id, user_id_val)
                                 .await;
-                            
+
                             seat_lock
                                 .set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0b10)
                                 .await;
@@ -355,7 +355,10 @@ pub async fn process_messages(
                                 "user_id": user_id_val
                             })
                             .to_string();
-                            let _: () = redis::AsyncCommands::publish(&mut *cli, channel_name, event_msg).await.unwrap_or(());
+                            let _: () =
+                                redis::AsyncCommands::publish(&mut *cli, channel_name, event_msg)
+                                    .await
+                                    .unwrap_or(());
                         }
 
                         // Broadcast to Fanout (Emails, Tickets)
@@ -390,12 +393,16 @@ pub async fn process_messages(
                             })
                             .await;
                     }
-                    
+
                     // Clear the checkout locks
                     if let Ok(mut redis_conn) = redis_pool.get().await {
                         for seat_id in &seat_ids {
                             let key = format!("seat_checkout:{}:{}", schedule_id_val, seat_id);
-                            let _: () = redis::cmd("DEL").arg(&key).query_async(&mut *redis_conn).await.unwrap_or_default();
+                            let _: () = redis::cmd("DEL")
+                                .arg(&key)
+                                .query_async(&mut *redis_conn)
+                                .await
+                                .unwrap_or_default();
                         }
                     }
                 }
