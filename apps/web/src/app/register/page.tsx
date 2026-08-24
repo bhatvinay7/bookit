@@ -40,6 +40,7 @@ export default function RegisterPage() {
           priority
         />
         <div className="absolute inset-0 bg-slate-950/90" />
+        <div className="absolute inset-0 ambient-mesh" aria-hidden="true" />
         <div className="absolute inset-0 bg-grid-pattern opacity-20" />
       </div>
       

@@ -14,6 +14,14 @@ const CLASS_COLORS: Record<string, string> = {
   Standard: "#6366f1", Premium: "#8b5cf6", VIP: "#ec4899", GA: "#f59e0b"
 };
 
+type TimeSlot = ScheduleV2["slot"];
+const TIME_SLOTS: Array<{ value: TimeSlot; label: string; hint: string; icon: string }> = [
+  { value: "Morning", label: "Morning", hint: "Before 12 PM", icon: "☀️" },
+  { value: "Afternoon", label: "Afternoon", hint: "12 PM – 5 PM", icon: "🌤️" },
+  { value: "Evening", label: "Evening", hint: "5 PM – 9 PM", icon: "🌇" },
+  { value: "Night", label: "Night", hint: "After 9 PM", icon: "🌙" },
+];
+
 // ─── Booking countdown badge ──────────────────────────────────────────────────
 
 function BookingCountdown({ seconds }: { seconds: number }) {
@@ -68,7 +76,7 @@ function CreateScheduleWizard({
   const [startTime,   setStartTime]   = useState(""); // optional custom start time
   const [endTime,     setEndTime]     = useState(""); // optional custom end time
   const [date,        setDate]        = useState(""); // YYYY-MM-DD
-  const [slot,        setSlot]        = useState<'Morning' | 'Afternoon' | 'Evening' | 'Night'>('Evening');
+  const [slot,        setSlot]        = useState<TimeSlot>('Evening');
   const [bookingOpen, setBookingOpen] = useState("");
   const [venueName,   setVenueName]   = useState("");
   const [venueAddress,setVenueAddress]= useState("");
@@ -309,20 +317,31 @@ function CreateScheduleWizard({
       {/* ── Step 3: Time + Prices ───────────────────────────────────────── */}
       {step === 3 && (
         <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-            <div>
+          <div>
+            <div style={{ maxWidth: 280 }}>
               <label className="admin-label">Date *</label>
               <input className="admin-input" type="date"
                 value={date} onChange={e => setDate(e.target.value)} />
             </div>
-            <div>
-              <label className="admin-label">Time Slot *</label>
-              <select className="admin-input" value={slot} onChange={e => setSlot(e.target.value as any)}>
-                <option value="Morning">Morning</option>
-                <option value="Afternoon">Afternoon</option>
-                <option value="Evening">Evening</option>
-                <option value="Night">Night</option>
-              </select>
+            <label className="admin-label" style={{ marginTop: 14 }}>Time Slot *</label>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10 }}>
+              {TIME_SLOTS.map(option => (
+                <button
+                  key={option.value}
+                  type="button"
+                  onClick={() => setSlot(option.value)}
+                  style={{
+                    padding: "12px 14px", borderRadius: 12, textAlign: "left", cursor: "pointer",
+                    border: `2px solid ${slot === option.value ? "#f59e0b" : "var(--border)"}`,
+                    background: slot === option.value ? "rgba(245, 158, 11, 0.12)" : "var(--bg-input)",
+                    color: "var(--text-primary)", transition: "all .15s",
+                  }}
+                >
+                  <span style={{ fontSize: 18, marginRight: 8 }}>{option.icon}</span>
+                  <strong style={{ fontSize: 13 }}>{option.label}</strong>
+                  <span style={{ display: "block", marginTop: 3, fontSize: 10, color: "var(--text-muted)" }}>{option.hint}</span>
+                </button>
+              ))}
             </div>
           </div>
           
@@ -635,7 +654,7 @@ function UpdateScheduleModal({
   };
 
   const [date, setDate] = useState(schedule.date ?? schedule.start_time?.slice(0, 10) ?? "");
-  const [slot, setSlot] = useState<"Morning" | "Afternoon" | "Evening" | "Night">((schedule.slot as any) ?? "Evening");
+  const [slot, setSlot] = useState<TimeSlot>(schedule.slot ?? "Evening");
   const [startTime, setStartTime] = useState(toLocalInput(schedule.start_time));
   const [endTime, setEndTime] = useState(toLocalInput(schedule.end_time));
   const [bookingOpen, setBookingOpen] = useState(toLocalInput(schedule.booking_open_at));
@@ -694,7 +713,7 @@ function UpdateScheduleModal({
           <select
             className="admin-input"
             value={slot}
-            onChange={(e) => setSlot(e.target.value as any)}
+            onChange={(e) => setSlot(e.target.value as TimeSlot)}
           >
             <option value="Morning">Morning</option>
             <option value="Afternoon">Afternoon</option>

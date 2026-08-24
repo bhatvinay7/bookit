@@ -146,6 +146,7 @@ export default function Home() {
             />
             {/* Overlay for text readability */}
             <div className="absolute inset-0 bg-gradient-to-r from-indigo-900/90 via-purple-900/80 to-indigo-900/70" />
+            <div className="absolute inset-0 ambient-mesh" aria-hidden="true" />
             
             <div className="relative z-20 max-w-6xl mx-auto px-4 sm:px-6 w-full grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">
               
@@ -201,9 +202,49 @@ export default function Home() {
               transition={{ duration: 0.7, delay: 0.3 }}
               className="relative w-full max-w-md lg:max-w-lg mx-auto flex justify-center lg:justify-end"
             >
-              <div className="relative">
+              <motion.div
+                animate={{ y: [0, -8, 0], rotate: [-2, 1, -2] }}
+                transition={{ duration: 6, ease: "easeInOut", repeat: Infinity }}
+                className="relative origin-bottom"
+              >
+                <div className="absolute -inset-12 rounded-full bg-purple-500/25 blur-[70px]" aria-hidden="true" />
+                <div className="absolute -inset-5 rounded-[4rem] border border-white/10" aria-hidden="true" />
+
+                {/* Secondary phone creates an advertisement-style layered pair. */}
+                <motion.div
+                  animate={{ x: [0, 5, 0], rotate: [8, 10, 8] }}
+                  transition={{ duration: 7, ease: "easeInOut", repeat: Infinity }}
+                  className="absolute inset-0 translate-x-10 -translate-y-3 rounded-[2.5rem] border border-white/20 bg-gradient-to-b from-slate-800 to-slate-950 p-3 shadow-[0_30px_80px_rgba(30,10,80,0.55)]"
+                  aria-hidden="true"
+                >
+                  <div className="flex h-full flex-col overflow-hidden rounded-[2rem] bg-[#0a0a16]">
+                    <div className="relative bg-gradient-to-br from-violet-600 via-purple-600 to-indigo-700 px-5 pb-5 pt-9">
+                      <div className="absolute left-1/2 top-2 h-4 w-16 -translate-x-1/2 rounded-full bg-black/80" />
+                      <div className="mb-5 flex items-center justify-between text-[9px] font-bold text-white/70">
+                        <span>9:41</span>
+                        <span>BookIt Explore</span>
+                      </div>
+                      <div className="h-3 w-32 rounded-full bg-white/90" />
+                      <div className="mt-2 h-2 w-24 rounded-full bg-white/35" />
+                    </div>
+                    <div className="flex flex-1 flex-col gap-3 p-4">
+                      {["from-fuchsia-500 to-violet-600", "from-indigo-500 to-blue-600", "from-amber-400 to-orange-500"].map((gradient) => (
+                        <div key={gradient} className="rounded-2xl border border-white/10 bg-white/5 p-3">
+                          <div className={`mb-3 h-16 rounded-xl bg-gradient-to-br ${gradient} opacity-80`} />
+                          <div className="h-2 w-3/4 rounded-full bg-white/35" />
+                          <div className="mt-2 h-2 w-1/2 rounded-full bg-white/15" />
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mx-4 mb-4 rounded-xl border border-violet-400/20 bg-violet-500/15 px-3 py-2 text-center text-[9px] font-bold text-violet-200">
+                      Discover your next experience
+                    </div>
+                  </div>
+                </motion.div>
+
                 {/* Phone Frame */}
-                <div className="w-[280px] sm:w-[300px] lg:w-[360px] lg:h-[90vh] lg:max-h-[850px] bg-white dark:bg-slate-900 rounded-[2.5rem] shadow-2xl shadow-black/30 p-3 relative border border-slate-200 dark:border-slate-800 flex flex-col">
+                <div className="relative z-10 flex h-[75svh] max-h-[680px] w-[280px] flex-col rounded-[2.5rem] border border-white/70 bg-gradient-to-b from-white to-slate-100 p-3 shadow-[0_35px_90px_rgba(0,0,0,0.38)] dark:border-white/15 dark:from-slate-800 dark:to-slate-950 sm:w-[300px] lg:h-[90vh] lg:max-h-[850px] lg:w-[360px]">
+                  <div className="pointer-events-none absolute inset-x-8 top-1 h-px bg-gradient-to-r from-transparent via-white to-transparent" />
                   {/* Notch */}
                   <div className="absolute top-0 left-1/2 -translate-x-1/2 w-32 h-7 bg-white dark:bg-slate-900 rounded-b-2xl z-20 flex items-center justify-center border-b border-slate-200 dark:border-slate-800">
                     <div className="w-16 h-4 bg-black rounded-full" />
@@ -276,7 +317,29 @@ export default function Home() {
                     </div>
                   </div>
                 </div>
-              </div>
+
+                <motion.div
+                  animate={{ y: [0, -5, 0] }}
+                  transition={{ duration: 4, ease: "easeInOut", repeat: Infinity }}
+                  className="absolute -left-5 top-[18%] z-20 rounded-2xl border border-white/20 bg-slate-950/75 px-3 py-2 shadow-xl backdrop-blur-xl sm:-left-12"
+                >
+                  <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-purple-300">Live events</p>
+                  <p className="mt-0.5 text-xs font-bold text-white">Always within reach</p>
+                </motion.div>
+                <motion.div
+                  animate={{ y: [0, 6, 0] }}
+                  transition={{ duration: 5, ease: "easeInOut", repeat: Infinity }}
+                  className="absolute -right-7 bottom-[12%] z-20 flex items-center gap-2 rounded-2xl border border-white/20 bg-white/90 px-3 py-2 shadow-xl backdrop-blur-xl sm:-right-14"
+                >
+                  <div className="flex h-7 w-7 items-center justify-center rounded-full bg-emerald-500 text-white">
+                    <TicketCheck className="h-3.5 w-3.5" />
+                  </div>
+                  <div>
+                    <p className="text-[9px] font-bold uppercase tracking-wider text-emerald-600">Confirmed</p>
+                    <p className="text-[11px] font-bold text-slate-900">Instant booking</p>
+                  </div>
+                </motion.div>
+              </motion.div>
             </motion.div>
           </div>
           </div>

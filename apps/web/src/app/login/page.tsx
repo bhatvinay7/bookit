@@ -42,6 +42,7 @@ export default function LoginPage() {
           priority
         />
         <div className="absolute inset-0 bg-slate-950/90" />
+        <div className="absolute inset-0 ambient-mesh" aria-hidden="true" />
         <div className="absolute inset-0 bg-grid-pattern opacity-20" />
       </div>
       
@@ -69,10 +70,6 @@ export default function LoginPage() {
           Sign in to access your premium ticketing dashboard and manage all your experiences in one place.
         </p>
 
-        {/* Abstract decorative elements */}
-        <div className="absolute bottom-20 left-20 right-20 h-48 border border-[var(--border)] rounded-3xl bg-[var(--card-bg)]/30 backdrop-blur-md overflow-hidden opacity-50 mask-linear-faded">
-            <div className="absolute inset-0 bg-grid-pattern opacity-40" />
-        </div>
       </div>
 
       {/* ════ RIGHT: GLASSMORPHIC FORM ════ */}

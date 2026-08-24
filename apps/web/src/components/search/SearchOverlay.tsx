@@ -11,8 +11,9 @@ import type { Show } from "@/types";
 interface SearchOverlayProps {
   isOpen: boolean;
   onClose: () => void;
-  /** Legacy props — kept for backwards-compat, not used */
+  /** Optional fallback data retained for backwards compatibility. */
   shows?: Show[];
+  /** Opens the dashboard's schedule picker for the selected show. */
   onSelectShow?: (show: Show) => void;
 }
 
@@ -34,8 +35,9 @@ const TYPE_EMOJI: Record<string, string> = {
   Event: "🎪",
   GameEvent: "🏟️",
 };
+const EMPTY_RESULTS: Show[] = [];
 
-export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
+export function SearchOverlay({ isOpen, onClose, onSelectShow }: SearchOverlayProps) {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -46,18 +48,25 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
 
   // Debounce
   useEffect(() => {
-    const t = setTimeout(() => setDebouncedQuery(query), 280);
+    const normalizedQuery = query.trim();
+    const delay = normalizedQuery.length < 2 ? 0 : 300;
+    const t = setTimeout(
+      () => setDebouncedQuery(normalizedQuery.length < 2 ? "" : normalizedQuery),
+      delay,
+    );
     return () => clearTimeout(t);
   }, [query]);
 
   // Reset when opened
   useEffect(() => {
-    if (isOpen) {
+    if (!isOpen) return;
+    const id = setTimeout(() => {
       setQuery("");
       setDebouncedQuery("");
       setActiveIdx(-1);
-      setTimeout(() => inputRef.current?.focus(), 80);
-    }
+      inputRef.current?.focus();
+    }, 80);
+    return () => clearTimeout(id);
   }, [isOpen]);
 
   // Keyboard: Escape closes, arrows navigate
@@ -85,29 +94,36 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
     return () => { clearTimeout(id); document.removeEventListener("mousedown", handler); };
   }, [isOpen, onClose]);
 
-  const { data: searchResults, isLoading } = useSearchShows(debouncedQuery, city);
-  const results = searchResults || [];
+  const { data: searchResults, isFetching } = useSearchShows(debouncedQuery, city);
+  const results = searchResults ?? EMPTY_RESULTS;
+  const safeActiveIdx = Math.min(activeIdx, results.length - 1);
 
   const navigate = useCallback((show: Show) => {
+    if (onSelectShow) {
+      onClose();
+      onSelectShow(show);
+      return;
+    }
+
     const id = show.id || show._id?.$oid;
     if (!id) return;
     onClose();
     router.push(`/shows/${id}`);
-  }, [router, onClose]);
+  }, [router, onClose, onSelectShow]);
 
   // Keyboard Enter on highlighted item
   useEffect(() => {
     if (!isOpen) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Enter" && activeIdx >= 0 && results[activeIdx]) {
-        navigate(results[activeIdx]);
+      if (e.key === "Enter" && safeActiveIdx >= 0 && results[safeActiveIdx]) {
+        navigate(results[safeActiveIdx]);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [isOpen, activeIdx, results, navigate]);
+  }, [isOpen, safeActiveIdx, results, navigate]);
 
-  const showDropdown = isOpen && query.length > 1;
+  const showDropdown = isOpen && query.trim().length > 1;
 
   return (
     <AnimatePresence>
@@ -125,8 +141,7 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
 
           {/* Search box — centred, max-w like Google */}
           <div
-            className="fixed inset-x-0 top-0 z-[99] flex justify-center px-4"
-            style={{ paddingTop: "12px" }}
+            className="fixed inset-x-0 top-0 z-[99] flex justify-center px-2 pt-[max(8px,env(safe-area-inset-top))] sm:px-4 sm:pt-3"
           >
             <motion.div
               ref={containerRef}
@@ -139,76 +154,58 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
             >
               {/* Input row */}
               <div
+                className="flex flex-wrap items-center gap-2 px-3 py-2.5 sm:flex-nowrap sm:gap-2.5 sm:px-4"
                 style={{
-                  display: "flex",
-                  alignItems: "center",
                   background: "var(--card-bg, #1e293b)",
                   border: "1.5px solid var(--accent, #6366f1)",
                   borderRadius: showDropdown ? "16px 16px 0 0" : "16px",
-                  padding: "10px 16px",
-                  gap: "10px",
                   boxShadow: "0 8px 32px rgba(0,0,0,0.4), 0 0 0 4px rgba(99,102,241,0.12)",
                   transition: "border-radius 0.15s",
                 }}
               >
-                {isLoading && query.length > 1 ? (
-                  <Loader2 size={20} className="text-[var(--accent)] animate-spin shrink-0" />
-                ) : (
-                  <Search size={20} className="text-[var(--accent)] shrink-0" />
-                )}
+                <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                  {isFetching && debouncedQuery.length > 1 ? (
+                    <Loader2 size={20} className="text-[var(--accent)] animate-spin shrink-0" />
+                  ) : (
+                    <Search size={20} className="text-[var(--accent)] shrink-0" />
+                  )}
 
-                <input
-                  ref={inputRef}
-                  value={query}
-                  onChange={e => { setQuery(e.target.value); setActiveIdx(-1); }}
-                  placeholder="Search movies, concerts, events…"
-                  style={{
-                    flex: 1,
-                    background: "transparent",
-                    border: "none",
-                    outline: "none",
-                    color: "var(--text-primary, #f8fafc)",
-                    fontSize: "16px",
-                    fontFamily: "inherit",
-                  }}
-                  autoComplete="off"
-                  spellCheck={false}
-                />
+                  <input
+                    ref={inputRef}
+                    value={query}
+                    onChange={e => { setQuery(e.target.value); setActiveIdx(-1); }}
+                    placeholder="Search movies, concerts, events…"
+                    className="min-w-0 flex-1 bg-transparent text-base text-[var(--text-primary)] outline-none placeholder:text-[var(--text-muted)]"
+                    autoComplete="off"
+                    spellCheck={false}
+                    aria-label="Search shows"
+                  />
 
-                <div style={{ flexShrink: 0, paddingLeft: 8, borderLeft: "1px solid var(--border)", display: "flex", alignItems: "center" }}>
-                  <CitySelector selectedCity={city} onSelect={setCity} />
+                  {query && (
+                    <button
+                      onClick={() => { setQuery(""); setDebouncedQuery(""); inputRef.current?.focus(); }}
+                      className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[var(--bg-subtle)] text-[var(--text-muted)]"
+                      aria-label="Clear search"
+                    >
+                      <X size={15} />
+                    </button>
+                  )}
                 </div>
 
-                {query && (
+                <div className="order-3 flex w-full items-center justify-between border-t border-[var(--border)] pt-2 sm:order-none sm:w-auto sm:border-l sm:border-t-0 sm:pl-2 sm:pt-0">
+                  <CitySelector selectedCity={city} onSelect={setCity} />
                   <button
-                    onClick={() => { setQuery(""); setDebouncedQuery(""); inputRef.current?.focus(); }}
-                    style={{
-                      background: "var(--bg-subtle, rgba(255,255,255,0.06))",
-                      border: "none",
-                      borderRadius: "50%",
-                      width: 28, height: 28,
-                      display: "flex", alignItems: "center", justifyContent: "center",
-                      cursor: "pointer", color: "var(--text-muted)",
-                      flexShrink: 0,
-                    }}
+                    onClick={onClose}
+                    className="rounded-lg px-2 py-1 text-xs font-medium text-[var(--text-muted)] sm:hidden"
+                    aria-label="Close search"
                   >
-                    <X size={14} />
+                    Close
                   </button>
-                )}
+                </div>
 
                 <button
                   onClick={onClose}
-                  style={{
-                    background: "transparent",
-                    border: "none",
-                    color: "var(--text-muted)",
-                    cursor: "pointer",
-                    fontSize: "13px",
-                    padding: "2px 6px",
-                    borderRadius: "6px",
-                    flexShrink: 0,
-                    fontFamily: "inherit",
-                  }}
+                  className="hidden shrink-0 rounded-md px-1.5 py-0.5 text-xs text-[var(--text-muted)] sm:block"
                 >
                   Esc
                 </button>
@@ -230,10 +227,12 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
                       borderRadius: "0 0 16px 16px",
                       overflow: "hidden",
                       boxShadow: "0 16px 48px rgba(0,0,0,0.5)",
+                      maxHeight: "min(70vh, 560px)",
+                      overflowY: "auto",
                     }}
                   >
                     {/* Loading skeleton */}
-                    {isLoading && (
+                    {isFetching && (
                       <div style={{ padding: "12px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
                         {[1, 2, 3].map(i => (
                           <div key={i} style={{ display: "flex", gap: 12, alignItems: "center" }}>
@@ -247,12 +246,18 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
                       </div>
                     )}
 
+                    {!isFetching && debouncedQuery !== query.trim() && (
+                      <div className="px-4 py-6 text-center text-sm text-[var(--text-muted)]">
+                        Searching…
+                      </div>
+                    )}
+
                     {/* Results list */}
-                    {!isLoading && results.length > 0 && (
+                    {!isFetching && results.length > 0 && (
                       <ul style={{ listStyle: "none", margin: 0, padding: "6px 0" }}>
                         {results.map((show, idx) => {
                           const id = show.id || show._id?.$oid;
-                          const isActive = idx === activeIdx;
+                          const isActive = idx === safeActiveIdx;
                           return (
                             <motion.li
                               key={id}
@@ -340,7 +345,7 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
                     )}
 
                     {/* Empty */}
-                    {!isLoading && results.length === 0 && (
+                    {!isFetching && debouncedQuery === query.trim() && results.length === 0 && (
                       <div style={{
                         padding: "28px 16px",
                         textAlign: "center",
@@ -348,12 +353,12 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
                         fontSize: "14px",
                       }}>
                         <div style={{ fontSize: 32, marginBottom: 8 }}>🔍</div>
-                        No results for <strong style={{ color: "var(--text-secondary)" }}>"{query}"</strong>
+                        No results for <strong style={{ color: "var(--text-secondary)" }}>&quot;{query}&quot;</strong>
                       </div>
                     )}
 
                     {/* Footer hint */}
-                    {!isLoading && results.length > 0 && (
+                    {!isFetching && results.length > 0 && (
                       <div style={{
                         borderTop: "1px solid var(--border)",
                         padding: "8px 16px",
@@ -362,9 +367,9 @@ export function SearchOverlay({ isOpen, onClose }: SearchOverlayProps) {
                         fontSize: "11px",
                         color: "var(--text-muted)",
                       }}>
-                        <span>↑↓ navigate</span>
-                        <span>↵ open</span>
-                        <span>Esc close</span>
+                        <span className="hidden sm:inline">↑↓ navigate</span>
+                        <span className="hidden sm:inline">↵ open</span>
+                        <span className="hidden sm:inline">Esc close</span>
                         <span style={{ marginLeft: "auto" }}>{results.length} result{results.length !== 1 ? "s" : ""}</span>
                       </div>
                     )}

@@ -1,24 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { UserNav } from "@/components/UserNav";
-import { Clock, Calendar, MapPin, ChevronRight, ArrowLeft } from "lucide-react";
+import { Clock, MapPin, ChevronRight, ArrowLeft } from "lucide-react";
 import type { ScheduleV2 } from "@/types/schedule";
-import { useTheme } from "next-themes";
 
 import type { Show } from "@/types";
+import { ScheduleCalendar, type ScheduleSlot } from "@/components/schedules/ScheduleCalendar";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 export default function ShowDetailsPage() {
   const params = useParams();
   const showId = params.id as string;
-  const router = useRouter();
-  const { theme } = useTheme();
-  const dark = theme === "dark";
 
   const [show, setShow] = useState<Show | null>(null);
   const [schedules, setSchedules] = useState<ScheduleV2[]>([]);
@@ -26,6 +23,7 @@ export default function ShowDetailsPage() {
   const [error, setError] = useState("");
 
   const [dateFilter, setDateFilter] = useState("");
+  const [slotFilter, setSlotFilter] = useState<ScheduleSlot>("All");
   const [venueFilter, setVenueFilter] = useState("");
 
   useEffect(() => {
@@ -43,6 +41,7 @@ export default function ShowDetailsPage() {
         if (schedulesRes.ok) {
           const schedData = await schedulesRes.json();
           setSchedules(schedData);
+          if (schedData.length > 0) setDateFilter(schedData[0].date);
         }
       } catch (err: unknown) {
         setError((err instanceof Error ? err.message : String(err)));
@@ -56,17 +55,15 @@ export default function ShowDetailsPage() {
   }, [showId]);
 
   const filteredSchedules = schedules.filter(s => {
-    if (dateFilter && new Date(s.start_time).toLocaleDateString() !== dateFilter) return false;
+    if (dateFilter && s.date !== dateFilter) return false;
+    if (slotFilter !== "All" && s.slot !== slotFilter) return false;
     if (venueFilter && (s.venue_name || "Main Venue") !== venueFilter) return false;
     return true;
   });
 
   if (loading) {
     return (
-      <div 
-        className="min-h-screen flex items-center justify-center"
-        style={{ background: dark ? 'var(--bg)' : 'linear-gradient(135deg, #f3f4f6 0%, #e0e7ff 50%, #f3e8ff 100%)' }}
-      >
+      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)]">
         <div className="w-12 h-12 rounded-full border-4 border-[var(--accent)] border-t-transparent animate-spin" />
       </div>
     );
@@ -74,10 +71,7 @@ export default function ShowDetailsPage() {
 
   if (error || !show) {
     return (
-      <div 
-        className="min-h-screen flex items-center justify-center text-white p-6 text-center"
-        style={{ background: dark ? 'var(--bg)' : 'linear-gradient(135deg, #f3f4f6 0%, #e0e7ff 50%, #f3e8ff 100%)' }}
-      >
+      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)] p-6 text-center text-[var(--text-primary)]">
         <div>
           <h1 className="text-2xl font-bold text-red-500 mb-4">{error || "Show not found"}</h1>
           <Link href="/shows">
@@ -89,40 +83,47 @@ export default function ShowDetailsPage() {
   }
 
   return (
-    <div 
-      className="min-h-screen text-[var(--text-primary)] font-sans"
-      style={{ background: dark ? 'var(--bg)' : 'linear-gradient(135deg, #f3f4f6 0%, #e0e7ff 50%, #f3e8ff 100%)' }}
-    >
-      <nav className="w-full px-4 sm:px-8 py-4 flex items-center justify-between z-50 bg-[var(--nav-bg)] backdrop-blur-xl border-b border-[var(--divider)] shadow-sm sticky top-0">
-        <div className="flex items-center gap-4">
-          <Link href="/dashboard" className="p-2 hover:bg-white/10 rounded-full transition-colors">
-            <ArrowLeft className="w-5 h-5" />
-          </Link>
-          <span className="text-xl font-black tracking-tight text-[var(--text-primary)] font-display">Show Details</span>
+    <div className="min-h-screen bg-[var(--bg)] font-sans text-[var(--text-primary)]">
+      <nav className="sticky top-0 z-50 border-b border-[var(--divider)] bg-[var(--nav-bg)] backdrop-blur-xl">
+        <div className="mx-auto flex min-h-16 w-full max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
+          <div className="flex min-w-0 items-center gap-2 sm:gap-4">
+            <Link href="/shows" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-[var(--bg-subtle)]" aria-label="Back to shows">
+              <ArrowLeft className="h-5 w-5" />
+            </Link>
+            <span className="truncate font-display text-lg font-black tracking-tight text-[var(--text-primary)] sm:text-xl">Show Details</span>
+          </div>
+          <UserNav />
         </div>
-        <UserNav />
       </nav>
 
-      <main className="w-full lg:w-[90%] max-w-none mx-auto px-6 md:px-12 py-12 flex flex-col lg:flex-row gap-12">
+      <main className="mx-auto grid w-full max-w-7xl grid-cols-1 items-start gap-8 px-4 py-5 sm:px-6 sm:py-8 lg:grid-cols-[minmax(0,3fr)_minmax(360px,2fr)] lg:gap-10 lg:px-8 lg:py-12 xl:gap-12">
         
-        {/* Left Col: Poster & Details */}
-        <div className="w-full lg:w-1/3 flex flex-col gap-6 lg:sticky lg:top-24 h-fit">
+        {/* Wide artwork with show details directly below it. */}
+        <section className="w-full min-w-0 flex flex-col gap-6">
           <motion.div 
             initial={{ opacity: 0, scale: 0.9 }}
             animate={{ opacity: 1, scale: 1 }}
-            className="w-full aspect-[2/3] rounded-3xl overflow-hidden shadow-2xl border border-[var(--border)] bg-[var(--bg-subtle)] relative"
+            className="relative aspect-[4/3] max-h-[560px] w-full overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--bg-subtle)] shadow-2xl sm:aspect-[16/9] md:aspect-[2/1] md:rounded-3xl"
           >
-            {show.poster_url ? (
-              <img src={show.poster_url} alt={show.title} className="w-full h-full object-cover" />
+            {show.backdrop_url || show.poster_url ? (
+              <img
+                src={show.backdrop_url || show.poster_url || ""}
+                alt={show.title}
+                className="w-full h-full object-cover"
+              />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)]">No Poster</div>
             )}
+            <div className="absolute inset-0 bg-gradient-to-t from-black/45 via-transparent to-transparent" />
+            <span className="absolute bottom-4 left-4 rounded-full border border-white/20 bg-black/45 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.16em] text-white backdrop-blur-md sm:bottom-5 sm:left-5 sm:text-xs">
+              {show.show_type === "GameEvent" ? "Sports" : show.show_type}
+            </span>
           </motion.div>
-          <div>
-            <h1 className="text-4xl font-black font-display mb-2 text-[var(--text-primary)]">{show.title}</h1>
+          <div className="w-full max-w-4xl">
+            <h1 className="mb-3 font-display text-3xl font-black leading-tight tracking-tight text-[var(--text-primary)] sm:text-4xl lg:text-5xl">{show.title}</h1>
             <div className="flex flex-wrap gap-2 mb-4">
-              <span className="px-3 py-1 bg-white/10 rounded-full text-xs font-bold text-[var(--text-primary)]">{show.language}</span>
-              <span className="px-3 py-1 bg-white/10 rounded-full text-xs font-bold text-[var(--text-primary)]">{show.duration_minutes} min</span>
+              {show.language && <span className="rounded-full border border-[var(--border)] bg-[var(--card-bg)] px-3 py-1 text-xs font-bold text-[var(--text-primary)]">{show.language}</span>}
+              {show.duration_minutes && <span className="rounded-full border border-[var(--border)] bg-[var(--card-bg)] px-3 py-1 text-xs font-bold text-[var(--text-primary)]">{show.duration_minutes} min</span>}
             </div>
             <p className="text-[var(--text-secondary)] leading-relaxed mb-6">{show.description}</p>
             {show.cast && show.cast.length > 0 && (
@@ -214,27 +215,27 @@ export default function ShowDetailsPage() {
               </div>
             )}
           </div>
-        </div>
+        </section>
 
-        {/* Right Col: Schedules */}
-        <div className="w-full lg:w-2/3">
-          <h2 className="text-2xl font-bold font-display mb-6 text-[var(--text-primary)]">Available Showtimes</h2>
+        {/* Schedules */}
+        <section className="w-full min-w-0 lg:sticky lg:top-24">
+          <div className="mb-5">
+            <p className="mb-1 text-[10px] font-black uppercase tracking-[0.18em] text-[var(--accent)] sm:text-xs">Choose a session</p>
+            <h2 className="font-display text-2xl font-black text-[var(--text-primary)] sm:text-3xl">Available Showtimes</h2>
+          </div>
           
           {schedules.length > 0 && (
-            <div className="flex flex-wrap gap-4 mb-8">
+            <>
+              <ScheduleCalendar
+                schedules={schedules}
+                selectedDate={dateFilter}
+                selectedSlot={slotFilter}
+                onDateChange={setDateFilter}
+                onSlotChange={setSlotFilter}
+              />
+              <div className="mb-6 flex flex-wrap gap-4 sm:mb-8">
               <select 
-                className="bg-[var(--card-bg)] border border-[var(--border)] text-[var(--text-primary)] rounded-xl px-4 py-2 focus:outline-none focus:border-[var(--accent)] transition-colors"
-                value={dateFilter}
-                onChange={(e) => setDateFilter(e.target.value)}
-              >
-                <option value="">All Dates</option>
-                {Array.from(new Set(schedules.map(s => new Date(s.start_time).toLocaleDateString()))).map(date => (
-                  <option key={date} value={date}>{date}</option>
-                ))}
-              </select>
-
-              <select 
-                className="bg-[var(--card-bg)] border border-[var(--border)] text-[var(--text-primary)] rounded-xl px-4 py-2 focus:outline-none focus:border-[var(--accent)] transition-colors"
+                className="min-h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--card-bg)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)] transition-colors focus:border-[var(--accent)] focus:outline-none sm:w-auto"
                 value={venueFilter}
                 onChange={(e) => setVenueFilter(e.target.value)}
               >
@@ -243,7 +244,8 @@ export default function ShowDetailsPage() {
                   <option key={v} value={v}>{v}</option>
                 ))}
               </select>
-            </div>
+              </div>
+            </>
           )}
 
           {filteredSchedules.length === 0 ? (
@@ -251,7 +253,7 @@ export default function ShowDetailsPage() {
               No upcoming schedules available for this show.
             </div>
           ) : (
-            <div className="flex flex-col gap-4">
+            <div className="flex flex-col gap-3 sm:gap-4">
               {filteredSchedules.map(schedule => {
                 const date = new Date(schedule.start_time);
                 const isOpen = (schedule.seconds_until_booking_open ?? 0) <= 0;
@@ -261,21 +263,21 @@ export default function ShowDetailsPage() {
                     initial={{ opacity: 0, x: 20 }}
                     animate={{ opacity: 1, x: 0 }}
                     key={schedule.id}
-                    className="flex flex-col sm:flex-row items-center gap-6 p-6 bg-[var(--card-bg)] rounded-2xl border border-[var(--border)] hover:border-[var(--accent)]/50 transition-colors shadow-sm"
+                    className="flex flex-col items-stretch gap-4 rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-4 shadow-sm transition-all hover:border-[var(--accent)]/50 hover:shadow-[var(--card-shadow-hover)] sm:flex-row sm:items-center sm:gap-6 sm:p-5"
                   >
                     <div className="flex-1 w-full sm:w-auto flex flex-col gap-2">
-                      <div className="flex items-center gap-3">
-                        <span className="text-lg font-bold text-[var(--text-primary)]">
+                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                        <span className="font-bold text-[var(--text-primary)] sm:text-lg">
                           {date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
                         </span>
-                        <span className="text-lg font-bold text-[var(--accent)]">
+                        <span className="font-bold text-[var(--accent)] sm:text-lg">
                           {date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
                         </span>
                       </div>
-                      <div className="flex items-center gap-4 text-sm text-[var(--text-secondary)]">
-                        <span className="flex items-center gap-1">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--text-secondary)] sm:text-sm">
+                        <span className="flex min-w-0 items-center gap-1">
                           <MapPin className="w-4 h-4" />
-                          {schedule.venue_name || "Main Venue"}
+                          <span className="truncate">{schedule.venue_name || "Main Venue"}</span>
                         </span>
                         <span className="flex items-center gap-1">
                           <Clock className="w-4 h-4" />
@@ -284,34 +286,34 @@ export default function ShowDetailsPage() {
                       </div>
                     </div>
                     
-                    <div className="w-full sm:w-auto flex items-center justify-between sm:justify-end gap-6">
-                      <div className="text-right">
-                        <div className="text-sm font-bold text-[var(--text-muted)] uppercase tracking-wider mb-1">Seats</div>
+                    <div className="flex w-full items-center justify-between gap-4 border-t border-[var(--divider)] pt-4 sm:w-auto sm:justify-end sm:gap-6 sm:border-0 sm:pt-0">
+                      <div className="text-left sm:text-right">
+                        <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] sm:text-xs">Seats</div>
                         <div className="font-bold text-[var(--text-primary)]">
                           <span className="text-[var(--accent)]">{schedule.available_seats}</span> / {schedule.total_seats}
                         </div>
                       </div>
                       
-                      <Link href={`/schedules/${schedule.id}`}>
-                        <button 
-                          disabled={!isOpen}
-                          className={`px-6 py-3 rounded-xl font-bold flex items-center gap-2 transition-all ${
-                            isOpen 
-                              ? 'bg-gradient-to-r from-[var(--accent)] to-yellow-500 text-[#12111a] hover:shadow-[0_0_15px_rgba(224,150,0,0.4)] hover:-translate-y-0.5' 
-                              : 'bg-[var(--bg-subtle)] text-[var(--text-muted)] cursor-not-allowed border border-[var(--border)]'
-                          }`}
+                      {isOpen ? (
+                        <Link
+                          href={`/schedules/${schedule.id}`}
+                          className="flex min-h-11 items-center gap-2 rounded-xl bg-gradient-to-r from-[var(--accent)] to-yellow-500 px-4 py-2.5 text-sm font-bold text-[#12111a] transition-all hover:-translate-y-0.5 hover:shadow-[0_0_15px_rgba(224,150,0,0.4)] sm:px-5"
                         >
-                          {isOpen ? "Select Seats" : "Opens Soon"}
-                          {isOpen && <ChevronRight className="w-4 h-4" />}
-                        </button>
-                      </Link>
+                          Select Seats
+                          <ChevronRight className="h-4 w-4" />
+                        </Link>
+                      ) : (
+                        <span className="flex min-h-11 cursor-not-allowed items-center rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-2.5 text-sm font-bold text-[var(--text-muted)] sm:px-5">
+                          Opens Soon
+                        </span>
+                      )}
                     </div>
                   </motion.div>
                 );
               })}
             </div>
           )}
-        </div>
+        </section>
 
       </main>
     </div>

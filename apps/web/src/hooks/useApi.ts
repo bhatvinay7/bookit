@@ -86,19 +86,21 @@ export function useMovies(category: string = "All", city: string = "All") {
 }
 
 // ─── User: Search ─────────────────────────────────────────────────────────────
-const SEARCH_API_URL = process.env.NEXT_PUBLIC_SEARCH_API_URL ?? 'http://localhost:8080';
+const SEARCH_API_URL = (process.env.NEXT_PUBLIC_SEARCH_API_URL ?? API_URL).replace(/\/$/, '');
 
 export function useSearchShows(query: string, city: string = "All") {
+  const normalizedQuery = query.trim();
   return useQuery<Show[], ApiError>({
-    queryKey: ['searchShows', query, city],
-    queryFn: () => {
+    queryKey: ['searchShows', normalizedQuery, city],
+    queryFn: ({ signal }) => {
       const url = new URL(`${SEARCH_API_URL}/api/search`);
-      url.searchParams.append('q', query);
+      url.searchParams.set('q', normalizedQuery);
       if (city !== "All") url.searchParams.append('city', city);
-      return apiFetch<Show[]>(url.toString());
+      return apiFetch<Show[]>(url.toString(), { signal });
     },
-    enabled: query.length > 1,
+    enabled: normalizedQuery.length > 1,
     retry: false,
+    staleTime: 30_000,
   });
 }
 

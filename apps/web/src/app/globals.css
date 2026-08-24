@@ -135,6 +135,15 @@ body {
     linear-gradient(to bottom, rgba(255, 255, 255, 0.05) 1px, transparent 1px);
 }
 
+/* Shared ambient color wash for the public home and authentication surfaces. */
+.ambient-mesh {
+  background:
+    radial-gradient(ellipse 58% 52% at 12% 18%, rgba(79, 70, 229, 0.28) 0%, transparent 68%),
+    radial-gradient(ellipse 52% 58% at 88% 24%, rgba(147, 51, 234, 0.24) 0%, transparent 70%),
+    radial-gradient(ellipse 48% 44% at 54% 88%, rgba(224, 150, 0, 0.12) 0%, transparent 72%);
+  pointer-events: none;
+}
+
 .mask-radial-faded {
   mask-image: radial-gradient(ellipse at center, black 10%, transparent 70%);
   -webkit-mask-image: radial-gradient(ellipse at center, black 10%, transparent 70%);

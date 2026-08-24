@@ -1,48 +1,45 @@
-import React, { useState } from "react";
-import { Film, Mic2, Calendar, Trophy, Compass, Search } from "lucide-react";
-import { motion } from "framer-motion";
+import { Calendar, Compass, Film, Mic2, Trophy } from "lucide-react";
 
 interface SidebarStripProps {
   selectedCategory: string;
-  onSelectCategory: (cat: string) => void;
-  onOpenSearch: () => void;
-  dark: boolean;
-  css: (v: string) => string;
+  onSelectCategory: (category: string) => void;
 }
 
 const CATEGORIES = [
-  { id: "All", icon: Compass, label: "Home" },
+  { id: "All", icon: Compass, label: "Discover" },
   { id: "Movie", icon: Film, label: "Movies" },
   { id: "GameEvent", icon: Trophy, label: "Sports" },
   { id: "Concert", icon: Mic2, label: "Concerts" },
   { id: "Event", icon: Calendar, label: "Events" },
 ];
 
-export function SidebarStrip({ selectedCategory, onSelectCategory, onOpenSearch, dark, css }: SidebarStripProps) {
+export function SidebarStrip({ selectedCategory, onSelectCategory }: SidebarStripProps) {
   return (
-    <div className="w-full flex items-center gap-6 py-2 overflow-x-auto scrollbar-hide border-none bg-transparent">
-      {/* Nav items */}
-      <nav className="flex items-center gap-2">
-        {CATEGORIES.map((item) => {
-          const isActive = selectedCategory === item.id || (selectedCategory === "All" && item.id === "All");
-          const Icon = item.icon;
-          return (
-            <button
-              key={item.id}
-              onClick={() => onSelectCategory(item.id)}
-              className="flex items-center justify-center px-4 py-2 rounded-xl transition-all duration-200"
-              style={{
-                color: isActive ? 'var(--accent)' : dark ? '#94a3b8' : '#64748b',
-                fontWeight: isActive ? 800 : 500,
-                borderBottom: isActive ? '2px solid var(--accent)' : '2px solid transparent',
-                borderRadius: 0,
-              }}
-            >
-              <span className="text-sm whitespace-nowrap">{item.label}</span>
-            </button>
-          );
-        })}
-      </nav>
-    </div>
+    <nav
+      className="no-scroll-bar flex w-full items-center gap-1.5 overflow-x-auto py-2 sm:gap-2 sm:py-2.5"
+      aria-label="Show categories"
+    >
+      {CATEGORIES.map((item) => {
+        const isActive = selectedCategory === item.id;
+        const Icon = item.icon;
+
+        return (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() => onSelectCategory(item.id)}
+            className={`flex min-h-9 shrink-0 items-center gap-2 rounded-full border px-3 py-2 text-xs font-bold transition-all sm:min-h-10 sm:px-4 sm:text-sm ${
+              isActive
+                ? "border-[var(--accent)] bg-[var(--accent)] text-slate-950 shadow-sm"
+                : "border-transparent bg-transparent text-[var(--text-secondary)] hover:border-[var(--border)] hover:bg-[var(--card-bg)] hover:text-[var(--text-primary)]"
+            }`}
+            aria-current={isActive ? "page" : undefined}
+          >
+            <Icon className="h-4 w-4" />
+            {item.label}
+          </button>
+        );
+      })}
+    </nav>
   );
 }
