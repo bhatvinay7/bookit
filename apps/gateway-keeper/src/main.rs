@@ -1,4 +1,3 @@
-
 mod circuit_breaker;
 mod grpc_service;
 mod proxy;
@@ -32,7 +31,7 @@ struct AppState {
     http_client: reqwest::Client,
     circuit_breaker: Arc<circuit_breaker::RedisCircuitBreaker>,
     http_server_url: Arc<String>,
-    search_server_url: Arc<String>,
+    search_server_grpc_url: Arc<String>,
 }
 
 #[derive(Deserialize)]
@@ -76,7 +75,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     bookit_telemetry::init_telemetry("bookit-gateway-keeper");
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-
     let redis_pool = establish_pool().await?;
     let single_node_lock = Arc::new(SingleNodeLock::establish().await?);
 
@@ -112,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     gateway.start_pubsub_listener();
 
     let grpc_addr: SocketAddr = std::env::var("GATEWAY_KEEPER_GRPC_ADDR")
-        .unwrap_or_else(|_| "[::1]:50052".to_string())
+        .unwrap_or_else(|_| "0.0.0.0:50052".to_string())
         .parse()?;
     let grpc_service = GatewayLockingService::new(gateway.clone());
     tokio::spawn(async move {
@@ -138,8 +136,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let http_server_url = Arc::new(
         std::env::var("HTTP_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:8082".to_string()),
     );
-    let search_server_url = Arc::new(
-        std::env::var("SEARCH_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:8084".to_string()),
+    let search_server_grpc_url = Arc::new(
+        std::env::var("SEARCH_SERVER_GRPC_URL")
+            .unwrap_or_else(|_| "http://127.0.0.1:50051".to_string()),
     );
 
     let state = Arc::new(AppState {
@@ -150,7 +149,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         http_client,
         circuit_breaker,
         http_server_url,
-        search_server_url,
+        search_server_grpc_url,
     });
 
     let proxy_router = Router::new()
@@ -223,9 +222,18 @@ async fn cancel_seats(
 ) -> Result<Json<CancelResponse>, ApiError> {
     let user_id = authenticated_user(&headers, &state.jwt_secret)?;
     validate_seats(&request.seat_ids)?;
-    let unlocked_seat_ids = match state.gateway.cancel(user_id, showtime_id, request.seat_ids).await {
+    let unlocked_seat_ids = match state
+        .gateway
+        .cancel(user_id, showtime_id, request.seat_ids)
+        .await
+    {
         Ok(ids) => ids,
-        Err(_e) => return Err(ApiError(StatusCode::BAD_REQUEST, "Cannot cancel seats while checkout is in progress")),
+        Err(_e) => {
+            return Err(ApiError(
+                StatusCode::BAD_REQUEST,
+                "Cannot cancel seats while checkout is in progress",
+            ));
+        }
     };
     Ok(Json(CancelResponse {
         success: !unlocked_seat_ids.is_empty(),
