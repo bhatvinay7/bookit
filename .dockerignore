@@ -5,3 +5,6 @@ node_modules
 .env*
 !apps/*/.env
 apps/web/.next
+bookit-k8s
+**/target
+scripts

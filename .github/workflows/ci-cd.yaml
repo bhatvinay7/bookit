@@ -309,7 +309,7 @@ jobs:
         env:
           # KUSTOMIZE_DIR: path inside bookit-k8s repo containing kustomization.yaml
           # Based on bookit-k8s repo structure: apps/ directory holds kustomization.yaml
-          KUSTOMIZE_DIR: ${{ secrets.KUSTOMIZE_DIR || 'apps' }}
+          KUSTOMIZE_DIR: ${{ secrets.KUSTOMIZE_DIR || 'apps/base' }}
         run: |
           # Try explicit path first, then fallback to dynamic discovery
           if [ -f "${KUSTOMIZE_DIR}/kustomization.yaml" ] || [ -f "${KUSTOMIZE_DIR}/kustomization.yml" ]; then
@@ -347,8 +347,10 @@ jobs:
       - name: Generate Sealed Secrets
         working-directory: gitops-repo
         env:
-          KUSTOMIZE_DIR: ${{ secrets.KUSTOMIZE_DIR || 'apps' }}
+          KUSTOMIZE_DIR: ${{ secrets.KUSTOMIZE_DIR || 'apps/base' }}
+          CLOUDFLARE_R2_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}
           CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
@@ -418,6 +420,13 @@ jobs:
             exit 1
           fi
           
+          # Generate bookit-secrets (for infrastructure / DB backups)
+          kubectl create secret generic bookit-secrets \
+            --from-literal=CLOUDFLARE_R2_ACCESS_KEY="$CLOUDFLARE_R2_ACCESS_KEY" \
+            --from-literal=CLOUDFLARE_R2_SECRET_ACCESS_KEY="$CLOUDFLARE_R2_SECRET_ACCESS_KEY" \
+            --from-literal=CLOUDFLARE_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID" \
+            --dry-run=client -o yaml | kubeseal --controller-name "$CONTROLLER_NAME" --controller-namespace "$CONTROLLER_NS" --format yaml > sealed-secret.yaml
+
           # Generate Backend Secrets
           kubectl create secret generic backend-secrets \
             --from-literal=CLOUDFLARE_R2_SECRET_ACCESS_KEY="$CLOUDFLARE_R2_SECRET_ACCESS_KEY" \
@@ -463,7 +472,7 @@ jobs:
           git add -A
           if ! git diff --cached --quiet; then
             git commit -m "chore(gitops): update image tags to commit-$(echo '${{ github.sha }}' | cut -c1-7) [skip ci]"
-            git push origin HEAD:main
+            git push origin HEAD:${{ github.ref_name }}
           else
             echo "No image tag changes to commit."
           fi
