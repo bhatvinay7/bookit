@@ -8,6 +8,7 @@ service SearchService {
 
 message SearchRequest {
     string query = 1;
+    string city = 2;
 }
 
 message SearchResponse {
