@@ -1,7 +1,7 @@
 mod stream;
 
 use dotenvy::dotenv;
-use mongodb::{bson::Document, options::ClientOptions, Client as MongoClient};
+use mongodb::{Client as MongoClient, bson::Document, options::ClientOptions};
 use redis_conn::establish_pool;
 use std::env;
 use tracing::info;
@@ -23,7 +23,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client_options = ClientOptions::parse(&mongo_url).await?;
     client_options.app_name = Some("cdc-worker".to_string());
     let mongo_client = MongoClient::with_options(client_options)?;
-    let coll = mongo_client.database(&db_name).collection::<Document>("shows");
+    let coll = mongo_client
+        .database(&db_name)
+        .collection::<Document>("shows");
 
     // Setup Redis
     let redis_pool = establish_pool().await?;

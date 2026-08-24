@@ -1,8 +1,8 @@
 use futures::StreamExt;
 use mongodb::{
-    bson::{doc, Document},
-    options::ChangeStreamOptions,
     Collection,
+    bson::{Document, doc},
+    options::ChangeStreamOptions,
 };
 use redis::AsyncCommands;
 use redis_conn::RedisPool;
@@ -25,14 +25,17 @@ pub async fn watch_redis_stream(
             }
         };
 
-        let resume_token_str: Option<String> = redis_cli.get(resume_token_key).await.unwrap_or(None);
+        let resume_token_str: Option<String> =
+            redis_cli.get(resume_token_key).await.unwrap_or(None);
 
         let mut options = ChangeStreamOptions::builder()
             .full_document(Some(mongodb::options::FullDocumentType::UpdateLookup))
             .build();
 
         if let Some(token_str) = resume_token_str {
-            if let Ok(token_doc) = serde_json::from_str::<mongodb::change_stream::event::ResumeToken>(&token_str) {
+            if let Ok(token_doc) =
+                serde_json::from_str::<mongodb::change_stream::event::ResumeToken>(&token_str)
+            {
                 info!("Resuming change stream from token: {}", token_str);
                 options.resume_after = Some(token_doc);
             }
@@ -40,7 +43,9 @@ pub async fn watch_redis_stream(
             info!("Starting change stream from now");
         }
 
-        let pipeline = vec![doc! { "$match": { "operationType": { "$in": ["insert", "update", "replace", "delete"] } } }];
+        let pipeline = vec![
+            doc! { "$match": { "operationType": { "$in": ["insert", "update", "replace", "delete"] } } },
+        ];
 
         match coll.watch().with_options(options).pipeline(pipeline).await {
             Ok(mut stream) => {
@@ -75,9 +80,8 @@ pub async fn watch_redis_stream(
                                 // Save resume token
                                 if let Ok(token_json) = mongodb::bson::to_document(&event.id) {
                                     if let Ok(token_str) = serde_json::to_string(&token_json) {
-                                        let _: Result<(), _> = redis_cli
-                                            .set(resume_token_key, token_str)
-                                            .await;
+                                        let _: Result<(), _> =
+                                            redis_cli.set(resume_token_key, token_str).await;
                                     }
                                 }
                             }
