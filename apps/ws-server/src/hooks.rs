@@ -1,7 +1,11 @@
 use crate::grpc_client::GrpcLockClient;
 use crate::locking::{confirm_payment, sync_locks_from_zset, sync_room_state_snapshot};
 use redis::AsyncCommands;
-use redis_conn::{RedisPool, SeatLock, adapter::{PubSubEvent, RedisSocketAdapter}, keys};
+use redis_conn::{
+    RedisPool, SeatLock,
+    adapter::{PubSubEvent, RedisSocketAdapter},
+    keys,
+};
 use serde_json::json;
 use std::sync::Arc;
 use tracing::{error, info};
