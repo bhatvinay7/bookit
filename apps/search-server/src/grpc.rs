@@ -1,5 +1,5 @@
+use serde_json::{Value, json};
 use std::sync::Arc;
-use serde_json::{json, Value};
 use tonic::{Request, Response, Status};
 
 use bookit_proto::search::search_service_server::SearchService;
@@ -24,7 +24,7 @@ impl SearchService for GrpcSearchService {
         request: Request<SearchRequest>,
     ) -> Result<Response<SearchResponse>, Status> {
         let req = request.into_inner();
-        
+
         if req.query.trim().is_empty() {
             return Ok(Response::new(SearchResponse {
                 results_json: "[]".to_string(),
@@ -33,14 +33,14 @@ impl SearchService for GrpcSearchService {
 
         let search_url = format!("{}/shows/_search", self.state.es_url);
 
-        use diesel::prelude::*;
         use bookit_db::schema::schedules;
+        use diesel::prelude::*;
 
         let mut conn = match self.state.db_pool.get() {
             Ok(c) => c,
             Err(e) => return Err(Status::internal(format!("Database error: {}", e))),
         };
-        
+
         let active_show_ids: Vec<String> = schedules::table
             .select(schedules::mongo_show_id)
             .filter(schedules::start_time.gt(chrono::Utc::now()))
@@ -52,6 +52,15 @@ impl SearchService for GrpcSearchService {
         if active_show_ids.is_empty() {
             return Ok(Response::new(SearchResponse {
                 results_json: "[]".to_string(),
+            }));
+        }
+
+        let mut filters = vec![json!({
+            "terms": { "_id": active_show_ids }
+        })];
+        if !req.city.trim().is_empty() && req.city != "All" {
+            filters.push(json!({
+                "match_phrase": { "city": req.city.trim() }
             }));
         }
 
@@ -67,11 +76,7 @@ impl SearchService for GrpcSearchService {
                             }
                         }
                     ],
-                    "filter": [
-                        {
-                            "terms": { "_id": active_show_ids }
-                        }
-                    ],
+                    "filter": filters,
                     "must_not": [
                         {
                             "exists": { "field": "deleted_at" }
@@ -82,7 +87,8 @@ impl SearchService for GrpcSearchService {
             "size": 20
         });
 
-        let res = self.state
+        let res = self
+            .state
             .es_client
             .post(&search_url)
             .json(&es_query)
@@ -100,16 +106,26 @@ impl SearchService for GrpcSearchService {
                 {
                     for hit in hits {
                         if let Some(source) = hit.get("_source") {
-                            let id = hit.get("_id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let title = source.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let image = source.get("poster_url").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            let venue = source.get("venue").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                            
+                            let id = hit
+                                .get("_id")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
+                            let title = source
+                                .get("title")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or_default()
+                                .to_string();
                             shows.push(json!({
                                 "id": id,
                                 "title": title,
-                                "image": image,
-                                "venue": venue
+                                "image": source.get("poster_url").cloned().unwrap_or(Value::Null),
+                                "poster_url": source.get("poster_url").cloned().unwrap_or(Value::Null),
+                                "thumbnail_url": source.get("thumbnail_url").cloned().unwrap_or(Value::Null),
+                                "venue": source.get("venue").cloned().unwrap_or(Value::Null),
+                                "city": source.get("city").cloned().unwrap_or(Value::Null),
+                                "show_type": source.get("show_type").cloned().unwrap_or(json!("Event")),
+                                "tags": source.get("tags").cloned().unwrap_or(json!([]))
                             }));
                         }
                     }

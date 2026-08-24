@@ -1,13 +1,13 @@
 mod es;
+mod grpc;
 mod stream;
 mod types;
-mod grpc;
 
-use axum::{routing::get, Router};
+use axum::{Router, routing::get};
 use bookit_mongo::models::show::Show;
 use bookit_proto::search::search_service_server::SearchServiceServer;
 use dotenvy::dotenv;
-use mongodb::{options::ClientOptions, Client as MongoClient};
+use mongodb::{Client as MongoClient, options::ClientOptions};
 use reqwest::Client as HttpClient;
 use std::env;
 use std::net::SocketAddr;
@@ -63,7 +63,9 @@ async fn main() {
     tokio::spawn(async move {
         println!("Search gRPC Server listening on grpc://{}", grpc_addr);
         tonic::transport::Server::builder()
-            .add_service(SearchServiceServer::new(grpc::GrpcSearchService::new(grpc_state)))
+            .add_service(SearchServiceServer::new(grpc::GrpcSearchService::new(
+                grpc_state,
+            )))
             .serve(grpc_addr)
             .await
             .expect("Search gRPC server failed");

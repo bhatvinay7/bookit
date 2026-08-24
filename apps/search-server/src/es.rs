@@ -1,6 +1,6 @@
 use bookit_mongo::models::show::Show;
 use futures::StreamExt;
-use mongodb::{bson::doc, Collection};
+use mongodb::{Collection, bson::doc};
 use reqwest::Client as HttpClient;
 use serde_json::json;
 
