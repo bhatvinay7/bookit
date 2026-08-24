@@ -1,12 +1,12 @@
-use opentelemetry::{global, KeyValue};
+use opentelemetry::{KeyValue, global};
 use opentelemetry_otlp::{ExportConfig, WithExportConfig};
 use opentelemetry_sdk::{
+    Resource,
     metrics::{MeterProviderBuilder, PeriodicReader},
     trace::{Config, TracerProvider},
-    Resource,
 };
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Registry};
 use std::time::Duration;
+use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
 pub fn init_telemetry(service_name: &'static str) {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
@@ -36,9 +36,10 @@ pub fn init_telemetry(service_name: &'static str) {
         )
         .expect("Failed to create metrics exporter");
 
-    let metrics_reader = PeriodicReader::builder(metrics_exporter, opentelemetry_sdk::runtime::Tokio)
-        .with_interval(Duration::from_secs(10))
-        .build();
+    let metrics_reader =
+        PeriodicReader::builder(metrics_exporter, opentelemetry_sdk::runtime::Tokio)
+            .with_interval(Duration::from_secs(10))
+            .build();
 
     let meter_provider = MeterProviderBuilder::default()
         .with_resource(resource)
@@ -49,13 +50,12 @@ pub fn init_telemetry(service_name: &'static str) {
 
     // 3. Setup Tracing Subscriber to hook into standard Rust `tracing` macros
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
-    
+
     // Set up standard stdout formatting as well for local viewing
     let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
-    
+
     // Respect RUST_LOG environment variable for filtering log levels
-    let filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     Registry::default()
         .with(filter)
@@ -63,5 +63,9 @@ pub fn init_telemetry(service_name: &'static str) {
         .with(telemetry)
         .init();
 
-    tracing::info!("Telemetry initialized successfully for {} pushing to {}", service_name, endpoint);
+    tracing::info!(
+        "Telemetry initialized successfully for {} pushing to {}",
+        service_name,
+        endpoint
+    );
 }
