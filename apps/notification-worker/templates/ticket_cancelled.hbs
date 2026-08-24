@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light">
+  <title>Cancellation confirmed</title>
+  <style>body{margin:0!important;padding:0!important;background:#f3f4f6;font-family:Arial,Helvetica,sans-serif}table{border-collapse:collapse}@media only screen and (max-width:620px){.shell{width:100%!important}.content{padding:24px 20px!important}}</style>
+</head>
+<body>
+  <div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">Your BookIt cancellation has been confirmed.</div>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background:#f3f4f6"><tr><td align="center" style="padding:32px 12px">
+    <table role="presentation" class="shell" width="600" cellpadding="0" cellspacing="0" style="width:600px;max-width:600px;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 8px 30px rgba(15,23,42,.08)">
+      <tr><td style="padding:28px 36px;background:#111827;color:#fff"><div style="font-size:26px;font-weight:800">Book<span style="color:#fbbf24">It</span></div><div style="margin-top:6px;font-size:13px;color:#cbd5e1">Cancellation update</div></td></tr>
+      <tr><td class="content" style="padding:36px">
+        <div style="display:inline-block;padding:7px 12px;border-radius:999px;background:#fee2e2;color:#991b1b;font-size:12px;font-weight:700;text-transform:uppercase">Cancelled</div>
+        <h1 style="margin:18px 0 10px;color:#111827;font-size:30px;line-height:1.2">Your cancellation is confirmed.</h1>
+        <p style="margin:0 0 26px;color:#4b5563;font-size:16px;line-height:1.65">The seats below have been released. Your refund will be returned to the original payment method according to your bank’s processing time.</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="width:100%;background:#fff7ed;border:1px solid #fed7aa;border-radius:14px">
+          <tr><td style="padding:18px 20px;border-bottom:1px solid #fed7aa"><span style="color:#9a3412;font-size:11px;font-weight:700">ORDER</span><br><span style="display:inline-block;margin-top:6px;color:#111827;font-size:14px;font-weight:700;word-break:break-all">{{order_id}}</span></td></tr>
+          <tr><td style="padding:18px 20px"><span style="color:#9a3412;font-size:11px;font-weight:700">REFUND AMOUNT</span><br><span style="display:inline-block;margin-top:6px;color:#111827;font-size:20px;font-weight:800">₹{{refund_amount}}</span></td></tr>
+        </table>
+        <h2 style="margin:28px 0 12px;color:#111827;font-size:17px">Released seats ({{seat_count}})</h2>
+        <div>{{#each seats}}<span style="display:inline-block;margin:0 7px 7px 0;padding:8px 12px;border-radius:8px;background:#f3f4f6;color:#374151;font-size:13px;font-weight:700">Seat {{this}}</span>{{/each}}</div>
+        <p style="margin:24px 0 0;color:#6b7280;font-size:13px;line-height:1.6">Questions? Contact <a href="mailto:{{support_email}}" style="color:#4338ca">{{support_email}}</a>.</p>
+      </td></tr>
+      <tr><td style="padding:22px 36px;background:#f8fafc;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px">This transactional email was sent because a BookIt booking was cancelled.</td></tr>
+    </table>
+  </td></tr></table>
+</body>
+</html>

@@ -22,3 +22,4 @@ chrono = { version = "0.4.45", features = ["serde"] }
 bigdecimal = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 anyhow = "1.0"
+handlebars = "6"

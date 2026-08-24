@@ -1,0 +1,14 @@
+BOOKIT — BOOKING CONFIRMED
+
+Your payment was successful and your ticket is ready.
+
+Order: {{order_id}}
+Venue: {{venue}}
+Show time: {{show_time}}
+Seats ({{seat_count}}): {{#each seats}}{{this}}{{#unless @last}}, {{/unless}}{{/each}}
+Total paid: ₹{{amount}}
+
+Download your ticket: {{ticket_url}}
+
+Present the PDF ticket at entry and do not share its QR code publicly.
+Need help? {{support_email}}
