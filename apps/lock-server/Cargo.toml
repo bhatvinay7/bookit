@@ -22,5 +22,5 @@ rustls = { version = "0.23", features = ["ring"] }
 bookit-db = { version = "0.1.0", path = "../../packages/db" }
 diesel = { version = "2.3.11", features = ["postgres", "r2d2", "chrono"] }
 uuid = { version = "1.15.1", features = ["v4"] }
-
+dashmap = "6.1"
 
