@@ -23,8 +23,14 @@ pub fn cache_schedule_seats_key(schedule_id: i32) -> String {
     format!("cache:schedule:{}:seats", schedule_id)
 }
 
+pub const CACHE_SHOWS: &str = "cache:shows:all";
+pub const CACHE_DASHBOARD_GRID: &str = "cache:dashboard:grid";
 pub const MOVIES_ALL: &str = "cache:movies:all";
-pub const TTL_MOVIES_ALL: u64 = 3600;
+
+pub const TTL_24_HOURS: u64 = 24 * 60 * 60;
+pub const TTL_SHOWS: u64 = TTL_24_HOURS;
+pub const TTL_DASHBOARD_GRID: u64 = TTL_24_HOURS;
+pub const TTL_MOVIES_ALL: u64 = TTL_24_HOURS;
 
 pub fn movie_detail(id: i32) -> String {
     format!("cache:movie:{}:detail", id)
@@ -43,9 +49,6 @@ pub const TTL_SHOWTIME_SEATS: u64 = 60;
 
 pub const ADMIN_STATS: &str = "cache:admin:stats";
 pub const TTL_ADMIN_STATS: u64 = 60;
-
-pub const CACHE_DASHBOARD_GRID: &str = "cache:dashboard:grid";
-pub const TTL_DASHBOARD_GRID: u64 = 600; // 10 minutes
 
 /// Get the Redis bitmap that stores live seat state for a schedule.
 ///

@@ -1,7 +1,7 @@
-use async_trait::async_trait;
-use redis::cluster_async::ClusterConnection;
-use redis::AsyncCommands;
 use crate::seat_lock::SeatLock;
+use async_trait::async_trait;
+use redis::AsyncCommands;
+use redis::cluster_async::ClusterConnection;
 use tracing::{error, info};
 
 #[derive(Clone)]
@@ -12,8 +12,7 @@ pub struct ClusterLock {
 impl ClusterLock {
     pub async fn establish(urls: Vec<String>) -> Result<Self, redis::RedisError> {
         info!("Connecting to Redis Cluster with {} URLs...", urls.len());
-        let client = redis::cluster::ClusterClientBuilder::new(urls)
-            .build()?;
+        let client = redis::cluster::ClusterClientBuilder::new(urls).build()?;
         let connection = client.get_async_connection().await?;
         Ok(Self { connection })
     }
@@ -29,7 +28,10 @@ impl SeatLock for ClusterLock {
         expires_in_sec: i32,
     ) -> bool {
         let ttl_ms = (expires_in_sec * 1000) as u64;
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
         let expiry = now + ttl_ms as i64;
         let processing_expiry = now + (expires_in_sec as i64 * 1000) + 15000;
 
@@ -70,7 +72,10 @@ impl SeatLock for ClusterLock {
         let bitmap_key = crate::keys::schedule_seat_bitmap(showtime_id);
         let queue_member = format!("{}:{}", seat_id, user_id);
 
-        let bit_offset = match usize::try_from(seat_id).ok().and_then(|id| id.checked_mul(2)) {
+        let bit_offset = match usize::try_from(seat_id)
+            .ok()
+            .and_then(|id| id.checked_mul(2))
+        {
             Some(v) => v,
             None => return false,
         };
@@ -126,9 +131,12 @@ impl SeatLock for ClusterLock {
         expires_in_sec: i32,
     ) -> bool {
         let ttl_ms = (expires_in_sec * 1000) as u64;
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as i64;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
         let expiry = now + ttl_ms as i64;
-        
+
         let room_zset_key = format!("{{{}}}:locks", showtime_id);
         let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
         let bitmap_key = crate::keys::schedule_seat_bitmap(showtime_id);
@@ -162,18 +170,25 @@ impl SeatLock for ClusterLock {
 
         let mut invoker = script.key(&room_zset_key);
         invoker.key(&user_zset_key).key(&bitmap_key).arg(expiry);
-            
+
         for seat_id in &seat_ids {
             let queue_member = serde_json::json!({
                 "seat_id": seat_id,
                 "schedule_id": showtime_id,
                 "user_id": user_id,
-            }).to_string();
-            let bit_offset = match usize::try_from(*seat_id).ok().and_then(|id| id.checked_mul(2)) {
+            })
+            .to_string();
+            let bit_offset = match usize::try_from(*seat_id)
+                .ok()
+                .and_then(|id| id.checked_mul(2))
+            {
                 Some(v) => v,
                 None => continue,
             };
-            invoker.arg(seat_id.to_string()).arg(&queue_member).arg(bit_offset);
+            invoker
+                .arg(seat_id.to_string())
+                .arg(&queue_member)
+                .arg(bit_offset);
         }
 
         let mut cli = self.connection.clone();
@@ -190,7 +205,8 @@ impl SeatLock for ClusterLock {
                     "seat_id": seat_id,
                     "schedule_id": showtime_id,
                     "user_id": user_id,
-                }).to_string();
+                })
+                .to_string();
                 zadd_cmd.arg(processing_expiry).arg(&queue_member);
             }
             let _: redis::RedisResult<()> = zadd_cmd.query_async(&mut cli).await;
@@ -232,10 +248,12 @@ impl SeatLock for ClusterLock {
                 let bitmap_key = crate::keys::schedule_seat_bitmap(showtime_id);
                 let queue_member = format!("{}:{}", seat_id, user_id);
 
-                self.zrem_cluster(&user_zset_key, &seat_id.to_string()).await;
+                self.zrem_cluster(&user_zset_key, &seat_id.to_string())
+                    .await;
                 self.zrem_cluster(&room_zset_key, &queue_member).await;
                 self.zrem_cluster(&queue_key, &queue_member).await;
-                self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0).await;
+                self.set_schedule_seat_bitmap_state_cluster(&bitmap_key, seat_id, 0)
+                    .await;
                 true
             }
             _ => false,
@@ -281,8 +299,11 @@ impl SeatLock for ClusterLock {
         let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
         let queue_key = crate::keys::seat_processing_queue_key();
         let bitmap_key = crate::keys::schedule_seat_bitmap(showtime_id);
-        
-        let bit_offset = match usize::try_from(seat_id).ok().and_then(|id| id.checked_mul(2)) {
+
+        let bit_offset = match usize::try_from(seat_id)
+            .ok()
+            .and_then(|id| id.checked_mul(2))
+        {
             Some(v) => v,
             None => return false,
         };
@@ -400,7 +421,10 @@ impl SeatLock for ClusterLock {
         let bitmap_key = crate::keys::schedule_seat_bitmap(showtime_id);
         let queue_member = format!("{}:{}", seat_id, user_id);
 
-        let bit_offset = match usize::try_from(seat_id).ok().and_then(|id| id.checked_mul(2)) {
+        let bit_offset = match usize::try_from(seat_id)
+            .ok()
+            .and_then(|id| id.checked_mul(2))
+        {
             Some(v) => v,
             None => return false,
         };
@@ -457,7 +481,10 @@ impl SeatLock for ClusterLock {
         let queue_key = crate::keys::seat_processing_queue_key();
         let bitmap_key = crate::keys::schedule_seat_bitmap(showtime_id);
 
-        let bit_offset = match usize::try_from(seat_id).ok().and_then(|id| id.checked_mul(2)) {
+        let bit_offset = match usize::try_from(seat_id)
+            .ok()
+            .and_then(|id| id.checked_mul(2))
+        {
             Some(v) => v,
             None => return,
         };
