@@ -5,9 +5,9 @@ mod email;
 use bookit_db::db::create_db_pool;
 use dotenvy::dotenv;
 use lapin::{
-    options::{ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions, BasicConsumeOptions},
-    types::{AMQPValue, FieldTable},
     ExchangeKind,
+    options::{BasicConsumeOptions, ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions},
+    types::{AMQPValue, FieldTable},
 };
 use rmq_conn::connect_with_retry;
 use std::collections::BTreeMap;

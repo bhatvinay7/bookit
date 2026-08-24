@@ -1,5 +1,5 @@
-use diesel::prelude::*;
 use bookit_db::schema::users::dsl as us;
+use diesel::prelude::*;
 
 pub fn get_user_email(conn: &mut PgConnection, u_id: i32) -> String {
     us::users
