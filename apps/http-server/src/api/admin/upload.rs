@@ -2,8 +2,8 @@ use crate::api::state::AppState;
 use crate::helpers::AppError;
 use crate::services::r2::upload_from_multipart;
 use axum::{
-    extract::{Multipart, State},
     Json,
+    extract::{Multipart, State},
 };
 use serde::Serialize;
 use std::sync::Arc;

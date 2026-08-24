@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Query, State},
     Json,
+    extract::{Query, State},
 };
 use bson::doc;
 use futures::stream::StreamExt;
@@ -60,11 +60,14 @@ pub async fn get_movies(
         }
     }
 
-    use diesel::prelude::*;
     use bookit_db::schema::schedules;
+    use diesel::prelude::*;
 
-    let mut conn = state.db_pool.get().map_err(|e| AppError::internal(e.to_string()))?;
-    
+    let mut conn = state
+        .db_pool
+        .get()
+        .map_err(|e| AppError::internal(e.to_string()))?;
+
     // Fetch distinct mongo_show_ids that have an active schedule
     let active_show_ids: Vec<String> = schedules::table
         .select(schedules::mongo_show_id)
@@ -104,4 +107,3 @@ pub async fn get_movies(
     let _ = set_cached(&state, &cache_key, &movies, keys::TTL_MOVIES_ALL);
     Ok(Json(movies))
 }
-

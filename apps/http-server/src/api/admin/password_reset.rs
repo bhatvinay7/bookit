@@ -1,7 +1,7 @@
-use axum::{extract::State, http::StatusCode, Json};
-use bcrypt::{hash, DEFAULT_COST};
-use bookit_db::schema::users::dsl::{email as email_col, password_hash as pw_col, users};
+use axum::{Json, extract::State, http::StatusCode};
+use bcrypt::{DEFAULT_COST, hash};
 use bookit_db::models::{User, UserRole};
+use bookit_db::schema::users::dsl::{email as email_col, password_hash as pw_col, users};
 use diesel::prelude::*;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
@@ -43,18 +43,29 @@ pub async fn reset_request(
     }
 
     let mut conn = state.db_pool.get().map_err(|_| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "Database connection failed.")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database connection failed.",
+        )
     })?;
 
     // Only generate a token if the user exists AND is an Admin
     let user = users
         .filter(email_col.eq(&payload.email))
         .first::<User>(&mut conn)
-        .map_err(|_| err(StatusCode::NOT_FOUND, "No admin account found with that email."))?;
+        .map_err(|_| {
+            err(
+                StatusCode::NOT_FOUND,
+                "No admin account found with that email.",
+            )
+        })?;
 
     if user.role != UserRole::Admin {
         // Return the same message to avoid leaking which accounts are admins
-        return Err(err(StatusCode::FORBIDDEN, "No admin account found with that email."));
+        return Err(err(
+            StatusCode::FORBIDDEN,
+            "No admin account found with that email.",
+        ));
     }
 
     // Generate a cryptographically random token via UUID v4 (already in deps)
@@ -98,7 +109,10 @@ pub async fn reset_confirm(
     Json(payload): Json<ResetConfirmPayload>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if payload.new_password.len() < 8 {
-        return Err(err(StatusCode::BAD_REQUEST, "Password must be at least 8 characters."));
+        return Err(err(
+            StatusCode::BAD_REQUEST,
+            "Password must be at least 8 characters.",
+        ));
     }
 
     // Look up the token in Redis
@@ -110,7 +124,10 @@ pub async fn reset_confirm(
         .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Cache error."))?;
 
     let stored_token = stored.ok_or_else(|| {
-        err(StatusCode::GONE, "Reset token not found or has expired. Please request a new one.")
+        err(
+            StatusCode::GONE,
+            "Reset token not found or has expired. Please request a new one.",
+        )
     })?;
 
     if stored_token != payload.token {
@@ -118,18 +135,30 @@ pub async fn reset_confirm(
     }
 
     // Hash the new password
-    let hashed = hash(&payload.new_password, DEFAULT_COST)
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to hash password."))?;
+    let hashed = hash(&payload.new_password, DEFAULT_COST).map_err(|_| {
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Failed to hash password.",
+        )
+    })?;
 
     // Update the user's password in Postgres
     let mut conn = state.db_pool.get().map_err(|_| {
-        err(StatusCode::INTERNAL_SERVER_ERROR, "Database connection failed.")
+        err(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Database connection failed.",
+        )
     })?;
 
     let updated = diesel::update(users.filter(email_col.eq(&payload.email)))
         .set(pw_col.eq(&hashed))
         .execute(&mut conn)
-        .map_err(|_| err(StatusCode::INTERNAL_SERVER_ERROR, "Failed to update password."))?;
+        .map_err(|_| {
+            err(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to update password.",
+            )
+        })?;
 
     if updated == 0 {
         return Err(err(StatusCode::NOT_FOUND, "User not found."));
@@ -138,5 +167,7 @@ pub async fn reset_confirm(
     // Invalidate the token immediately (single-use)
     let _: Result<(), _> = redis.del(&key).await;
 
-    Ok(Json(serde_json::json!({ "message": "Password reset successfully." })))
+    Ok(Json(
+        serde_json::json!({ "message": "Password reset successfully." }),
+    ))
 }

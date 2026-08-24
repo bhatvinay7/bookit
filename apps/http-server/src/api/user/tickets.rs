@@ -1,8 +1,8 @@
 use axum::{
-    extract::{Path, State},
-    http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
     Json,
+    extract::{Path, State},
+    http::{HeaderMap, StatusCode, header},
+    response::{IntoResponse, Response},
 };
 use bson::{doc, oid::ObjectId};
 use diesel::prelude::*;
@@ -17,7 +17,7 @@ use bookit_db::schema::orders::dsl as od;
 use bookit_mongo::models::Show;
 
 use crate::api::state::AppState;
-use crate::helpers::{db_err, AppError};
+use crate::helpers::{AppError, db_err};
 
 #[derive(Serialize)]
 pub struct UserTicket {
@@ -39,7 +39,7 @@ pub async fn get_user_tickets(
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or_else(|| AppError::bad_request("missing bearer token"))?;
-        
+
     let user_id = if token == "mock_token" {
         1
     } else {
@@ -84,7 +84,7 @@ pub async fn get_user_tickets(
         .mongo_client
         .database(&state.mongo_db_name)
         .collection::<Show>("shows");
-        
+
     let mut shows_map = HashMap::new();
     if !mongo_show_ids.is_empty() {
         let mut cursor = col
@@ -110,7 +110,7 @@ pub async fn get_user_tickets(
                     }
                 }
             }
-            
+
             let seat_labels: Vec<String> = all_seats
                 .iter()
                 .filter(|s| order_seat_ids.contains(&s.id))
@@ -121,7 +121,9 @@ pub async fn get_user_tickets(
                 .get(&sch.mongo_show_id)
                 .map(|sh| sh.title.clone())
                 .unwrap_or_else(|| "Unknown Show".to_string());
-            let venue = sch.venue_name.unwrap_or_else(|| "Unknown Venue".to_string());
+            let venue = sch
+                .venue_name
+                .unwrap_or_else(|| "Unknown Venue".to_string());
             let time = sch.start_time.to_string();
 
             UserTicket {
@@ -177,7 +179,7 @@ pub async fn get_ticket_details(
         .mongo_client
         .database(&state.mongo_db_name)
         .collection::<Show>("shows");
-        
+
     let title = if let Ok(oid) = ObjectId::parse_str(&sch.mongo_show_id) {
         if let Ok(Some(show)) = col.find_one(doc! { "_id": oid }).await {
             show.title
@@ -187,8 +189,10 @@ pub async fn get_ticket_details(
     } else {
         "Unknown Show".to_string()
     };
-    
-    let venue = sch.venue_name.unwrap_or_else(|| "Unknown Venue".to_string());
+
+    let venue = sch
+        .venue_name
+        .unwrap_or_else(|| "Unknown Venue".to_string());
     let time = sch.start_time.to_string();
 
     Ok(Json(UserTicket {
@@ -227,7 +231,10 @@ pub async fn download_ticket_pdf(
             (header::CONTENT_TYPE, "application/pdf"),
             (
                 header::CONTENT_DISPOSITION,
-                &format!("attachment; filename=\"ticket_{}.pdf\"", pdf_data.booking_id),
+                &format!(
+                    "attachment; filename=\"ticket_{}.pdf\"",
+                    pdf_data.booking_id
+                ),
             ),
         ],
         pdf_bytes,

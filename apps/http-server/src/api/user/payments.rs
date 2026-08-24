@@ -1,28 +1,24 @@
 use axum::{
+    Json,
     extract::State,
     http::{HeaderMap, StatusCode},
-    Json,
 };
+use bookit_redis::SeatLock;
 use diesel::{
-    sql_query,
+    Connection, ExpressionMethods, OptionalExtension, QueryDsl, RunQueryDsl, sql_query,
     sql_types::{Integer, Text},
-    Connection, OptionalExtension, RunQueryDsl, QueryDsl, ExpressionMethods,
 };
-use lapin::{
-    options::BasicPublishOptions,
-    BasicProperties,
-};
+use lapin::{BasicProperties, options::BasicPublishOptions};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
-use bookit_redis::SeatLock;
 
 use crate::{
     api::{auth::Claims, state::AppState},
     helpers::AppError,
 };
 
-use hmac::{Hmac, Mac, KeyInit};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 
 #[derive(Deserialize)]
@@ -65,14 +61,14 @@ pub async fn request_payment(
                 .razorpay_signature
                 .as_deref()
                 .ok_or_else(|| AppError::bad_request("Missing Razorpay signature"))?;
-            
+
             let secret = std::env::var("RAZORPAY_KEY_SECRET").unwrap_or_default();
             let payload = format!("{}|{}", order_id, payment_id);
             let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
                 .map_err(|_| AppError::internal("Invalid HMAC key"))?;
             mac.update(payload.as_bytes());
             let expected_signature = hex::encode(mac.finalize().into_bytes());
-            
+
             if expected_signature != signature {
                 return Err(AppError::bad_request("Invalid Razorpay signature"));
             }
@@ -104,7 +100,7 @@ pub async fn request_payment(
         .select(schedule_seats::price)
         .load(&mut conn)
         .map_err(|_| AppError::internal("failed to load seats"))?;
-    
+
     let mut sub_total = bigdecimal::BigDecimal::from(0);
     for price in seat_prices {
         sub_total += price;
@@ -128,14 +124,15 @@ pub async fn request_payment(
     } else {
         let id = Uuid::new_v4().to_string();
         let payload = serde_json::json!({
-            "payment_request_id": id, 
-            "user_id": user_id, 
-            "schedule_id": request.schedule_id, 
+            "payment_request_id": id,
+            "user_id": user_id,
+            "schedule_id": request.schedule_id,
             "seat_ids": request.seat_ids,
             "amount": total_amount_str,
             "razorpay_order_id": request.razorpay_order_id,
             "razorpay_payment_id": request.razorpay_payment_id
-        }).to_string();
+        })
+        .to_string();
         conn.transaction::<_, diesel::result::Error, _>(|conn| {
             sql_query("INSERT INTO payment_requests (id,idempotency_key,user_id,schedule_id,seat_ids,status) VALUES (CAST($1 AS uuid),$2,$3,$4,CAST($5 AS jsonb),CAST('pending' AS payment_request_status))")
                 .bind::<Text,_>(&id).bind::<Text,_>(&request.idempotency_key).bind::<Integer,_>(user_id).bind::<Integer,_>(request.schedule_id).bind::<Text,_>(&serde_json::to_string(&request.seat_ids).unwrap()).execute(conn)?;
@@ -146,11 +143,16 @@ pub async fn request_payment(
     };
 
     // Publish checkout message to RabbitMQ using existing channel
-    let channel = state.rmq_channel.as_ref().ok_or_else(|| {
-        AppError::internal("RMQ channel not available")
-    })?;
+    let channel = state
+        .rmq_channel
+        .as_ref()
+        .ok_or_else(|| AppError::internal("RMQ channel not available"))?;
 
-    let mut redis_conn = state.redis_client.get_multiplexed_async_connection().await.map_err(|e| AppError::internal(e.to_string()))?;
+    let mut redis_conn = state
+        .redis_client
+        .get_multiplexed_async_connection()
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
     for seat_id in &request.seat_ids {
         let key = format!("seat_checkout:{}:{}", request.schedule_id, seat_id);
         let _: () = redis::cmd("SETEX")
@@ -162,14 +164,15 @@ pub async fn request_payment(
             .map_err(|e| AppError::internal(e.to_string()))?;
     }
     let payload = serde_json::json!({
-        "payment_request_id": payment_request_id, 
-        "user_id": user_id, 
-        "schedule_id": request.schedule_id, 
+        "payment_request_id": payment_request_id,
+        "user_id": user_id,
+        "schedule_id": request.schedule_id,
         "seat_ids": request.seat_ids,
         "amount": total_amount_str,
         "razorpay_order_id": request.razorpay_order_id,
         "razorpay_payment_id": request.razorpay_payment_id
-    }).to_string();
+    })
+    .to_string();
     channel
         .basic_publish(
             "".into(),
@@ -241,16 +244,16 @@ pub async fn create_razorpay_order(
         .select(schedule_seats::price)
         .load(&mut conn)
         .map_err(|_| AppError::internal("failed to load seats"))?;
-    
+
     let mut sub_total = bigdecimal::BigDecimal::from(0);
     for price in seat_prices {
         sub_total += price;
     }
-    
+
     use std::str::FromStr;
     let tax_amt = &sub_total * bigdecimal::BigDecimal::from_str("0.18").unwrap();
     let total_amount = sub_total + tax_amt;
-    
+
     use bigdecimal::ToPrimitive;
     let backend_amount_paise = (total_amount * bigdecimal::BigDecimal::from(100))
         .round(0)
@@ -258,7 +261,9 @@ pub async fn create_razorpay_order(
         .ok_or_else(|| AppError::internal("price calculation overflow"))?;
 
     if backend_amount_paise != request.amount_paise {
-         return Err(AppError::bad_request("price mismatch between client and server"));
+        return Err(AppError::bad_request(
+            "price mismatch between client and server",
+        ));
     }
 
     let key_id = std::env::var("RAZORPAY_KEY_ID").unwrap_or_default();
@@ -268,7 +273,10 @@ pub async fn create_razorpay_order(
         return Ok((
             StatusCode::OK,
             Json(CreateRazorpayOrderResponse {
-                order_id: format!("order_mock_{}", &Uuid::new_v4().to_string().replace("-", "")[..14]),
+                order_id: format!(
+                    "order_mock_{}",
+                    &Uuid::new_v4().to_string().replace("-", "")[..14]
+                ),
             }),
         ));
     }
@@ -288,10 +296,16 @@ pub async fn create_razorpay_order(
 
     if !res.status().is_success() {
         let err_text = res.text().await.unwrap_or_else(|_| "unknown".into());
-        return Err(AppError::internal(format!("Razorpay API error: {}", err_text)));
+        return Err(AppError::internal(format!(
+            "Razorpay API error: {}",
+            err_text
+        )));
     }
 
-    let data: serde_json::Value = res.json().await.map_err(|e| AppError::internal(e.to_string()))?;
+    let data: serde_json::Value = res
+        .json()
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?;
     let order_id = data["id"].as_str().unwrap_or_default().to_string();
 
     Ok((
@@ -369,8 +383,8 @@ pub async fn get_checkout_summary(
         .get()
         .map_err(|_| AppError::internal("database unavailable"))?;
 
-    use bookit_db::schema::{schedule_seats, schedules};
     use bookit_db::models::{Schedule, ScheduleSeat};
+    use bookit_db::schema::{schedule_seats, schedules};
     use diesel::prelude::*;
 
     let sch: Schedule = schedules::table
@@ -400,9 +414,9 @@ pub async fn get_checkout_summary(
     let tax_amt = &sub_total * bigdecimal::BigDecimal::from_str("0.18").unwrap();
     let total = sub_total + tax_amt;
 
+    use bookit_mongo::models::Show;
     use bson::doc;
     use bson::oid::ObjectId;
-    use bookit_mongo::models::Show;
     let col = state
         .mongo_client
         .database(&state.mongo_db_name)
@@ -424,7 +438,9 @@ pub async fn get_checkout_summary(
             show_title,
             show_time: sch.start_time.to_string(),
             venue_name: sch.venue_name.unwrap_or_else(|| "Unknown Venue".into()),
-            venue_address: sch.venue_address.unwrap_or_else(|| "Unknown Address".into()),
+            venue_address: sch
+                .venue_address
+                .unwrap_or_else(|| "Unknown Address".into()),
             venue_city: sch.venue_city.unwrap_or_else(|| "Unknown City".into()),
             seats: seat_summaries,
             estimated_amount: total.to_string(),
@@ -460,8 +476,8 @@ pub async fn cancel_order(
         .get()
         .map_err(|_| AppError::internal("database unavailable"))?;
 
-    use bookit_db::schema::orders;
     use bookit_db::models::Order;
+    use bookit_db::schema::orders;
     use diesel::prelude::*;
 
     let order: Order = orders::table
@@ -485,13 +501,16 @@ pub async fn cancel_order(
     }
 
     if order.status != "completed" {
-        return Err(AppError::bad_request("only completed orders can be cancelled"));
+        return Err(AppError::bad_request(
+            "only completed orders can be cancelled",
+        ));
     }
 
     // Publish cancellation message to RabbitMQ using existing channel
-    let channel = state.rmq_channel.as_ref().ok_or_else(|| {
-        AppError::internal("RMQ channel not available")
-    })?;
+    let channel = state
+        .rmq_channel
+        .as_ref()
+        .ok_or_else(|| AppError::internal("RMQ channel not available"))?;
 
     let payload = serde_json::json!({
         "request_type": "cancellation",
@@ -533,4 +552,3 @@ pub async fn cancel_order(
         }),
     ))
 }
-

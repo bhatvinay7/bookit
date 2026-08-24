@@ -1,8 +1,8 @@
 use axum::{
+    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use bson::{doc, oid::ObjectId};
 use chrono::Utc;
@@ -148,6 +148,7 @@ pub async fn create_show(
         .map(|o| o.to_hex())
         .unwrap_or_default();
 
+    invalidate_async(&state, bookit_redis::keys::CACHE_SHOWS).await;
     invalidate_async(&state, bookit_redis::keys::CACHE_DASHBOARD_GRID).await;
 
     Ok((
@@ -184,6 +185,7 @@ pub async fn update_show(
 
     invalidate_async(&state, &cache_show_key(&id)).await;
     invalidate_async(&state, &cache_schedules_active_key()).await;
+    invalidate_async(&state, bookit_redis::keys::CACHE_SHOWS).await;
     invalidate_async(&state, bookit_redis::keys::CACHE_DASHBOARD_GRID).await;
 
     Ok(Json(serde_json::json!({ "updated": true })))
@@ -207,6 +209,7 @@ pub async fn delete_show(
 
     invalidate_async(&state, &cache_show_key(&id)).await;
     invalidate_async(&state, &cache_schedules_active_key()).await;
+    invalidate_async(&state, bookit_redis::keys::CACHE_SHOWS).await;
     invalidate_async(&state, bookit_redis::keys::CACHE_DASHBOARD_GRID).await;
 
     Ok(Json(serde_json::json!({ "deleted": true })))

@@ -1,5 +1,5 @@
-use axum::{extract::State, response::IntoResponse, Json};
-use bson::{doc, oid::ObjectId, Bson};
+use axum::{Json, extract::State, response::IntoResponse};
+use bson::{Bson, doc, oid::ObjectId};
 use chrono::Utc;
 use futures::StreamExt;
 use mongodb::Collection;
@@ -44,7 +44,7 @@ pub async fn list_categories(
             "category_ids",
             doc! {
                 "deleted_at": Bson::Null,
-                "next_start_time": { "$gte": Utc::now() },
+                "next_start_time": { "$gte": Utc::now().to_rfc3339() },
             },
         )
         .await
