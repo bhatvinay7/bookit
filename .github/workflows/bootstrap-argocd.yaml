@@ -13,13 +13,14 @@ jobs:
   bootstrap-argocd:
     name: Bootstrap ArgoCD on Cluster
     runs-on: ubuntu-latest
-    environment: production
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     steps:
       - name: Checkout GitOps repository
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.GITOPS_REPO || 'bhatvinay7/bookit-k8s' }}
           token: ${{ secrets.GITOPS_TOKEN || github.token }}
+          ref: ${{ github.ref_name }}
 
       - name: Configure kubectl
         env:
@@ -90,5 +91,13 @@ jobs:
             --set controller.service.externalTrafficPolicy=Local \
             --set controller.metrics.enabled=true
           
-          echo "Applying GitOps root App of Apps..."
-          kubectl apply -k argocd
+          echo "Installing the Sealed Secrets controller application..."
+          kubectl apply -f argocd/argocd-sealed-secrets.yaml
+
+          if [ "${{ github.ref_name }}" = "main" ]; then
+            echo "Bootstrapping production applications from main."
+            kubectl apply -f argocd/prod-apps.yaml
+          else
+            echo "Bootstrapping development applications from dev."
+            kubectl apply -f argocd/dev-apps.yaml
+          fi

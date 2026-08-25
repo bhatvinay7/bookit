@@ -219,7 +219,7 @@ jobs:
       needs.detect-changes.outputs.services != '[]' &&
       needs.detect-changes.outputs.services != ''
     runs-on: ubuntu-22.04
-    environment: production
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     permissions:
       contents: read
       packages: write   # required to push to ghcr.io
@@ -273,7 +273,7 @@ jobs:
     needs: [build-and-push, detect-changes]
     if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') && needs.detect-changes.outputs.services != '[]' && needs.detect-changes.outputs.services != ''
     runs-on: ubuntu-22.04
-    environment: production   # Required to access environment-scoped secrets (e.g. GITOPS_TOKEN)
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     steps:
       - name: Checkout GitOps repository
         uses: actions/checkout@v4
@@ -283,6 +283,7 @@ jobs:
           # GITHUB_TOKEN only works on the current repo and will 404 on external repos
           token: ${{ secrets.GITOPS_TOKEN || github.token }}
           path: gitops-repo
+          ref: ${{ github.ref_name }}
 
       - name: Configure kubectl
         env:
@@ -309,7 +310,7 @@ jobs:
         env:
           # KUSTOMIZE_DIR: path inside bookit-k8s repo containing kustomization.yaml
           # Based on bookit-k8s repo structure: apps/ directory holds kustomization.yaml
-          KUSTOMIZE_DIR: ${{ secrets.KUSTOMIZE_DIR || 'apps/base' }}
+          KUSTOMIZE_DIR: ${{ github.ref_name == 'main' && 'apps/overlays/prod' || 'apps/overlays/dev' }}
         run: |
           # Try explicit path first, then fallback to dynamic discovery
           if [ -f "${KUSTOMIZE_DIR}/kustomization.yaml" ] || [ -f "${KUSTOMIZE_DIR}/kustomization.yml" ]; then
@@ -347,10 +348,16 @@ jobs:
       - name: Generate Sealed Secrets
         working-directory: gitops-repo
         env:
-          KUSTOMIZE_DIR: ${{ secrets.KUSTOMIZE_DIR || 'apps/base' }}
-          CLOUDFLARE_R2_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY }}
+          DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+          DEPLOY_REGIONS: ${{ vars.DEPLOY_REGIONS }}
+          KUBE_CONTEXTS: ${{ vars.KUBE_CONTEXTS }}
+          GHCR_USERNAME: ${{ github.repository_owner }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
           CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+          CLOUDFLARE_R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
+          CLOUDFLARE_R2_PUBLIC_URL: ${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
@@ -361,7 +368,6 @@ jobs:
           INVITATION_ENCRYPTION_KEY: ${{ secrets.INVITATION_ENCRYPTION_KEY }}
           MONGO_DB_URL: ${{ secrets.MONGO_DB_URL }}
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
-          NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME: ${{ secrets.NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           RABBITMQ_URL: ${{ secrets.RABBITMQ_URL }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
@@ -374,95 +380,27 @@ jobs:
           SLOT_NAME: ${{ secrets.SLOT_NAME }}
           PUBLICATION: ${{ secrets.PUBLICATION }}
           NEXT_PUBLIC_SOCKET_URL: ${{ secrets.NEXT_PUBLIC_SOCKET_URL }}
-          NEXT_PUBLIC_R2_PUBLIC_URL: ${{ secrets.NEXT_PUBLIC_R2_PUBLIC_URL }}
-          NEXT_PUBLIC_USE_REMOTE_STOCKFISH: ${{ secrets.NEXT_PUBLIC_USE_REMOTE_STOCKFISH }}
-          CLIENT_URL: ${{ secrets.CLIENT_URL }}
         run: |
-          if [ -z "${{ secrets.KUBECONFIG }}" ]; then
-            echo "Error: KUBECONFIG is not set in GitHub Secrets. Cannot connect to cluster for automatic secret sealing."
-            exit 1
-          fi
-          
-          # Install kubeseal securely in /tmp to prevent it from being committed by git add -A
           wget -qO /tmp/kubeseal.tar.gz https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.26.2/kubeseal-0.26.2-linux-amd64.tar.gz
           tar -xzf /tmp/kubeseal.tar.gz -C /tmp kubeseal
           sudo install -m 755 /tmp/kubeseal /usr/local/bin/kubeseal
-          
-          if [ -f "${KUSTOMIZE_DIR}/kustomization.yaml" ] || [ -f "${KUSTOMIZE_DIR}/kustomization.yml" ]; then
-            cd "${KUSTOMIZE_DIR}"
-          else
-            KUSTOMIZATION_PATH=$(find . -type f \( -name "kustomization.yaml" -o -name "kustomization.yml" \) | sort | head -n 1)
-            if [ -n "$KUSTOMIZATION_PATH" ]; then
-              cd "$(dirname "$KUSTOMIZATION_PATH")"
-            else
-              echo "ERROR: kustomization file not found for secrets."
-              exit 1
-            fi
-          fi
-          
-          # Dynamically check if controller exists, install it if it does not
-          CONTROLLER_SVC=$(kubectl get svc --all-namespaces --no-headers | grep -i sealed-secret | awk '{print $1 " " $2}' | head -n 1)
-          if [ -z "$CONTROLLER_SVC" ]; then
-            echo "Sealed-secrets controller not found! Installing it automatically..."
-            kubectl apply -f https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.26.2/controller.yaml
-            CONTROLLER_NS="kube-system"
-            CONTROLLER_NAME="sealed-secrets-controller"
-            CONTROLLER_DEPLOY="deployment.apps/sealed-secrets-controller"
-          else
-            CONTROLLER_NS=$(echo "$CONTROLLER_SVC" | awk '{print $1}')
-            CONTROLLER_NAME=$(echo "$CONTROLLER_SVC" | awk '{print $2}')
-            CONTROLLER_DEPLOY=$(kubectl get deploy -n "$CONTROLLER_NS" -o name | grep -i sealed | head -n 1)
-          fi
-          
-          echo "Waiting up to 60s for the controller ($CONTROLLER_DEPLOY) to boot and become healthy..."
-          if ! kubectl rollout status "$CONTROLLER_DEPLOY" -n "$CONTROLLER_NS" --timeout=60s; then
-            echo "ERROR: Controller did not become ready in time."
+
+          IFS=',' read -ra regions <<< "${DEPLOY_REGIONS}"
+          IFS=',' read -ra contexts <<< "${KUBE_CONTEXTS}"
+          if [ "${#regions[@]}" -eq 0 ] || [ "${#regions[@]}" -ne "${#contexts[@]}" ]; then
+            echo "DEPLOY_REGIONS and KUBE_CONTEXTS must be non-empty comma-separated lists of equal length."
             exit 1
           fi
-          
-          # Generate bookit-secrets (for infrastructure / DB backups)
-          kubectl create secret generic bookit-secrets \
-            --from-literal=CLOUDFLARE_R2_ACCESS_KEY="$CLOUDFLARE_R2_ACCESS_KEY" \
-            --from-literal=CLOUDFLARE_R2_SECRET_ACCESS_KEY="$CLOUDFLARE_R2_SECRET_ACCESS_KEY" \
-            --from-literal=CLOUDFLARE_ACCOUNT_ID="$CLOUDFLARE_ACCOUNT_ID" \
-            --dry-run=client -o yaml | kubeseal --controller-name "$CONTROLLER_NAME" --controller-namespace "$CONTROLLER_NS" --format yaml > sealed-secret.yaml
-
-          # Generate Backend Secrets
-          kubectl create secret generic backend-secrets \
-            --from-literal=CLOUDFLARE_R2_SECRET_ACCESS_KEY="$CLOUDFLARE_R2_SECRET_ACCESS_KEY" \
-            --from-literal=CLOUDINARY_API_KEY="$CLOUDINARY_API_KEY" \
-            --from-literal=CLOUDINARY_API_SECRET="$CLOUDINARY_API_SECRET" \
-            --from-literal=CLOUDINARY_CLOUD_NAME="$CLOUDINARY_CLOUD_NAME" \
-            --from-literal=DATABASE_URL="$DATABASE_URL" \
-            --from-literal=GRPC_SERVER_URL="$GRPC_SERVER_URL" \
-            --from-literal=INVITATION_ENCRYPTION_KEY="$INVITATION_ENCRYPTION_KEY" \
-            --from-literal=MONGO_DB_URL="$MONGO_DB_URL" \
-            --from-literal=REDIS_URL="$REDIS_URL" \
-            --from-literal=RABBITMQ_URL="$RABBITMQ_URL" \
-            --from-literal=SMTP_HOST="$SMTP_HOST" \
-            --from-literal=SMTP_PORT="$SMTP_PORT" \
-            --from-literal=SMTP_SECURE="$SMTP_SECURE" \
-            --from-literal=SMTP_USER="$SMTP_USER" \
-            --from-literal=SMTP_PASS="$SMTP_PASS" \
-            --from-literal=SMTP_FROM="$SMTP_FROM" \
-            --from-literal=REPLICATION_URL="$REPLICATION_URL" \
-            --from-literal=SLOT_NAME="$SLOT_NAME" \
-            --from-literal=PUBLICATION="$PUBLICATION" \
-            --from-literal=GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
-            --from-literal=GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
-            --from-literal=CLIENT_URL="$CLIENT_URL" \
-            --dry-run=client -o yaml | kubeseal --controller-name "$CONTROLLER_NAME" --controller-namespace "$CONTROLLER_NS" --format yaml > sealed-backend-secrets.yaml
-            
-          # Generate Frontend Secrets
-          kubectl create secret generic frontend-secrets \
-            --from-literal=GOOGLE_CLIENT_ID="$GOOGLE_CLIENT_ID" \
-            --from-literal=GOOGLE_CLIENT_SECRET="$GOOGLE_CLIENT_SECRET" \
-            --from-literal=NEXT_PUBLIC_API_URL="$NEXT_PUBLIC_API_URL" \
-            --from-literal=NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME="$NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME" \
-            --from-literal=NEXT_PUBLIC_SOCKET_URL="$NEXT_PUBLIC_SOCKET_URL" \
-            --from-literal=NEXT_PUBLIC_R2_PUBLIC_URL="$NEXT_PUBLIC_R2_PUBLIC_URL" \
-            --from-literal=NEXT_PUBLIC_USE_REMOTE_STOCKFISH="$NEXT_PUBLIC_USE_REMOTE_STOCKFISH" \
-            --dry-run=client -o yaml | kubeseal --controller-name "$CONTROLLER_NAME" --controller-namespace "$CONTROLLER_NS" --format yaml > sealed-frontend-secrets.yaml
+          helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
+          helm repo update
+          for index in "${!regions[@]}"; do
+            helm upgrade --install sealed-secrets sealed-secrets/sealed-secrets \
+              --kube-context "${contexts[$index]}" --namespace kube-system \
+              --create-namespace --version 2.16.1
+            kubectl --context "${contexts[$index]}" rollout status deployment/sealed-secrets-controller \
+              -n kube-system --timeout=120s
+            ./scripts/seal-cluster-secrets.sh "$DEPLOY_ENV" "${regions[$index]}" "${contexts[$index]}"
+          done
 
       - name: Commit and push GitOps tag updates
         working-directory: gitops-repo
@@ -476,5 +414,3 @@ jobs:
           else
             echo "No image tag changes to commit."
           fi
-
-
