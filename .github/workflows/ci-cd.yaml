@@ -359,6 +359,7 @@ jobs:
           CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
           CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
           CLOUDFLARE_R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+          CLOUDFLARE_R2_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_ENDPOINT }}
           CLOUDFLARE_R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
           CLOUDFLARE_R2_PUBLIC_URL: ${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
@@ -369,9 +370,12 @@ jobs:
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL }}
           INVITATION_ENCRYPTION_KEY: ${{ secrets.INVITATION_ENCRYPTION_KEY }}
-          MONGO_DB_URL: ${{ secrets.MONGO_DB_URL }}
+          MONGODB_URL: ${{ secrets.MONGODB_URL || secrets.MONGO_DB_URL }}
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
+          REDIS_CLUSTER_URL: ${{ secrets.REDIS_CLUSTER_URL }}
+          REDIS_CLUSTER_URLS: ${{ secrets.REDIS_CLUSTER_URLS }}
+          REDIS_REMOTE_URL: ${{ secrets.REDIS_REMOTE_URL }}
           RABBITMQ_URL: ${{ secrets.RABBITMQ_URL }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
