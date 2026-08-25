@@ -6,6 +6,23 @@ on:
     paths:
       - '.github/workflows/bootstrap-argocd.yaml'
   workflow_dispatch:
+    inputs:
+      target_environment:
+        description: Environment to bootstrap
+        required: true
+        type: choice
+        options:
+          - development
+          - production
+      confirm_production:
+        description: Type PROMOTE-PRODUCTION when targeting production
+        required: false
+        type: string
+
+concurrency:
+  group: bootstrap-argocd-${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}
+  cancel-in-progress: false
+
 env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
@@ -13,8 +30,26 @@ jobs:
   bootstrap-argocd:
     name: Bootstrap ArgoCD on Cluster
     runs-on: ubuntu-latest
-    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}
     steps:
+      - name: Validate environment and source branch
+        env:
+          TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}
+          CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
+        run: |
+          expected_branch="dev"
+          if [ "$TARGET_ENVIRONMENT" = "production" ]; then
+            expected_branch="main"
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$CONFIRM_PRODUCTION" != "PROMOTE-PRODUCTION" ]; then
+              echo "Production bootstrap requires confirm_production=PROMOTE-PRODUCTION"
+              exit 1
+            fi
+          fi
+          if [ "${{ github.ref_name }}" != "$expected_branch" ]; then
+            echo "Environment $TARGET_ENVIRONMENT must run from branch $expected_branch; selected branch is ${{ github.ref_name }}."
+            exit 1
+          fi
+
       - name: Checkout GitOps repository
         uses: actions/checkout@v4
         with:
@@ -40,6 +75,30 @@ jobs:
             printf "%s" "$KUBE_DATA" | base64 -d > ~/.kube/config
           fi
           chmod 600 ~/.kube/config
+
+      - name: Verify target kubeconfig context
+        env:
+          EXPECTED_CONTEXT: ${{ vars.EXPECTED_KUBE_CONTEXT }}
+          EXPECTED_CLUSTER_NAME: ${{ vars.EXPECTED_CLUSTER_NAME }}
+          EXPECTED_SERVER: ${{ vars.EXPECTED_CLUSTER_SERVER }}
+        run: |
+          if [ -z "$EXPECTED_CONTEXT" ] || [ -z "$EXPECTED_CLUSTER_NAME" ] || [ -z "$EXPECTED_SERVER" ]; then
+            echo "EXPECTED_KUBE_CONTEXT, EXPECTED_CLUSTER_NAME, and EXPECTED_CLUSTER_SERVER must be configured in the selected GitHub environment."
+            exit 1
+          fi
+
+          actual_context=$(kubectl config current-context)
+          actual_cluster=$(kubectl config view --minify -o jsonpath='{.contexts[0].context.cluster}')
+          actual_server=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
+
+          echo "Selected environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}"
+          echo "Current context:      $actual_context"
+          echo "Cluster name:         $actual_cluster"
+          echo "API server:           $actual_server"
+
+          [ "$actual_context" = "$EXPECTED_CONTEXT" ] || { echo "Unexpected kube context"; exit 1; }
+          [ "$actual_cluster" = "$EXPECTED_CLUSTER_NAME" ] || { echo "Unexpected kube cluster name"; exit 1; }
+          [ "$actual_server" = "$EXPECTED_SERVER" ] || { echo "Unexpected Kubernetes API server"; exit 1; }
 
       - name: Install ArgoCD & Apply App of Apps
         run: |
@@ -94,7 +153,7 @@ jobs:
           echo "Installing the Sealed Secrets controller application..."
           kubectl apply -f argocd/argocd-sealed-secrets.yaml
 
-          if [ "${{ github.ref_name }}" = "main" ]; then
+          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}" = "production" ]; then
             echo "Bootstrapping production applications from main."
             kubectl apply -f argocd/prod-apps.yaml
           else
