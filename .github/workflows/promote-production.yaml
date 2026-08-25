@@ -1,0 +1,144 @@
+name: Promote Tested Images to Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      tested_commit_sha:
+        description: Full 40-character SHA previously built successfully on dev
+        required: true
+        type: string
+      services:
+        description: Comma-separated services, or all (all requires every image at this SHA)
+        required: true
+        default: all
+        type: string
+      confirm_production:
+        description: Type PROMOTE-PRODUCTION
+        required: true
+        type: string
+
+concurrency:
+  group: production-promotion
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  promote:
+    name: Open production GitOps promotion PR
+    runs-on: ubuntu-22.04
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Validate promotion request
+        env:
+          TESTED_SHA: ${{ inputs.tested_commit_sha }}
+          CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
+        run: |
+          [ "$CONFIRM_PRODUCTION" = "PROMOTE-PRODUCTION" ] || {
+            echo "Production promotion requires PROMOTE-PRODUCTION confirmation."
+            exit 1
+          }
+          [[ "$TESTED_SHA" =~ ^[0-9a-f]{40}$ ]] || {
+            echo "tested_commit_sha must be a full lowercase 40-character Git SHA."
+            exit 1
+          }
+
+      - name: Verify commit belongs to dev
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check tested commit ancestry
+        env:
+          TESTED_SHA: ${{ inputs.tested_commit_sha }}
+        run: |
+          git fetch origin dev
+          git cat-file -e "${TESTED_SHA}^{commit}"
+          git merge-base --is-ancestor "$TESTED_SHA" origin/dev || {
+            echo "$TESTED_SHA is not part of the dev branch."
+            exit 1
+          }
+
+      - name: Checkout GitOps main
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ secrets.GITOPS_REPO || 'bhatvinay7/bookit-k8s' }}
+          token: ${{ secrets.GITOPS_TOKEN }}
+          ref: main
+          path: gitops-repo
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set up Kustomize
+        uses: imranismail/setup-kustomize@v2
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GHCR_PULL_TOKEN }}
+
+      - name: Resolve tested tags and pin production digests
+        working-directory: gitops-repo/apps/overlays/prod
+        env:
+          TESTED_SHA: ${{ inputs.tested_commit_sha }}
+          REQUESTED_SERVICES: ${{ inputs.services }}
+        run: |
+          all_services=(http-server ws-server gateway-keeper lock-server notification-worker payment-processor search-server web)
+          if [ "$REQUESTED_SERVICES" = "all" ]; then
+            services=("${all_services[@]}")
+          else
+            IFS=',' read -ra services <<< "$REQUESTED_SERVICES"
+          fi
+
+          short_sha="${TESTED_SHA:0:7}"
+          for service in "${services[@]}"; do
+            service="${service//[[:space:]]/}"
+            valid=false
+            for candidate in "${all_services[@]}"; do
+              [ "$service" = "$candidate" ] && valid=true
+            done
+            [ "$valid" = true ] || { echo "Unknown service: $service"; exit 1; }
+
+            image="${REGISTRY}/${GITHUB_REPOSITORY_OWNER,,}/bookit-${service}"
+            reference="${image}:commit-${short_sha}"
+            echo "Resolving tested image $reference"
+            raw_manifest=$(mktemp)
+            docker buildx imagetools inspect --raw "$reference" > "$raw_manifest"
+            digest="sha256:$(sha256sum "$raw_manifest" | cut -d' ' -f1)"
+            rm "$raw_manifest"
+            docker buildx imagetools inspect "${image}@${digest}" >/dev/null
+            kustomize edit set image "bookit-${service}=${image}@${digest}"
+          done
+
+      - name: Validate production overlays
+        working-directory: gitops-repo
+        run: |
+          kubectl kustomize apps/regions/prod/us-east >/dev/null
+          kubectl kustomize apps/regions/prod/eu-west >/dev/null
+
+      - name: Push promotion branch and open PR
+        working-directory: gitops-repo
+        env:
+          GH_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+          TESTED_SHA: ${{ inputs.tested_commit_sha }}
+          REQUESTED_SERVICES: ${{ inputs.services }}
+          GITOPS_REPO: ${{ secrets.GITOPS_REPO || 'bhatvinay7/bookit-k8s' }}
+        run: |
+          branch="promote/${TESTED_SHA:0:7}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -b "$branch"
+          git add apps/overlays/prod/kustomization.yaml
+          git diff --cached --quiet && { echo "No production image changes found."; exit 1; }
+          git commit -m "chore(prod): promote tested images from ${TESTED_SHA:0:7}"
+          git push origin "$branch"
+          gh pr create --repo "$GITOPS_REPO" --base main --head "$branch" \
+            --title "Promote tested images ${TESTED_SHA:0:7} to production" \
+            --body "Promotes services \`${REQUESTED_SERVICES}\` from tested dev commit \`${TESTED_SHA}\`. Images are pinned by immutable registry digest. Requires review and merge; this workflow never pushes directly to main."

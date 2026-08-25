@@ -26,6 +26,10 @@ env:
   REGISTRY: ghcr.io
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
 
+concurrency:
+  group: ci-gitops-${{ github.ref_name }}
+  cancel-in-progress: false
+
 jobs:
 
 
@@ -211,15 +215,15 @@ jobs:
   build-and-push:
     name: Build & Push Docker Images
     needs: [validate, detect-changes]
-    # Build on push to dev or main when at least one service was affected.
-    # Pull requests do not push images — validation only.
+    # Dev builds the immutable artifacts. Main and pull requests validate only;
+    # production reuses a tested dev digest through promote-production.yaml.
     if: |
       (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') &&
+      github.ref == 'refs/heads/dev' &&
       needs.detect-changes.outputs.services != '[]' &&
       needs.detect-changes.outputs.services != ''
     runs-on: ubuntu-22.04
-    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+    environment: development
     permissions:
       contents: read
       packages: write   # required to push to ghcr.io
@@ -248,7 +252,6 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/bookit-${{ matrix.service }}
           tags: |
             type=sha,prefix=commit-
-            type=raw,value=${{ github.ref_name }}-latest
 
       - name: Build and push Multi-Stage image
         uses: docker/build-push-action@v5
@@ -271,9 +274,9 @@ jobs:
   update-gitops-tags:
     name: Update ArgoCD GitOps Manifests
     needs: [build-and-push, detect-changes]
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main') && needs.detect-changes.outputs.services != '[]' && needs.detect-changes.outputs.services != ''
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/dev' && needs.detect-changes.outputs.services != '[]' && needs.detect-changes.outputs.services != ''
     runs-on: ubuntu-22.04
-    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
+    environment: development
     steps:
       - name: Checkout GitOps repository
         uses: actions/checkout@v4
