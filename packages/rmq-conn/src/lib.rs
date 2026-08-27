@@ -7,11 +7,25 @@ use tracing::{error, info};
 pub async fn connect_with_retry() -> lapin::Result<Connection> {
     let amqp_url = std::env::var("RABBITMQ_URL").expect("RABBITMQ_URL must be set");
 
-    let retry_strategy = ExponentialBackoff::from_millis(100)
-        .max_delay(Duration::from_secs(10)) // max 10 second delay between retries
-        .take(10); // Attempt up to 10 times
+    let initial_delay = std::env::var("CONNECTION_RETRY_INITIAL_MS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(500);
+    let max_delay = std::env::var("CONNECTION_RETRY_MAX_MS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(30_000);
+    let attempts = std::env::var("CONNECTION_RETRY_ATTEMPTS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(30)
+        .max(1);
 
-    Retry::spawn(retry_strategy, || async {
+    let retry_strategy = ExponentialBackoff::from_millis(initial_delay)
+        .max_delay(Duration::from_millis(max_delay))
+        .take(attempts);
+
+    Retry::start(retry_strategy, || async {
         info!("Attempting to connect to RabbitMQ...");
         let options = ConnectionProperties::default();
 
