@@ -4,6 +4,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 
 use http_server::api;
 use http_server::api::state::AppState;
@@ -86,10 +87,11 @@ async fn main() {
         .nest("/api/auth", api::auth::auth_routes(app_state.clone()))
         .nest("/api/admin", api::admin::admin_routes(app_state.clone()))
         .nest("/api/user", api::user::user_routes(app_state.clone()))
-        .layer(cors);
+        .layer(cors)
+        .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8082));
-    println!("BookIt API listening on http://{}", addr);
+    tracing::info!(%addr, "BookIt API listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
