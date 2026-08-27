@@ -5,14 +5,11 @@ use mongodb::{Client as MongoClient, bson::Document, options::ClientOptions};
 use redis_conn::establish_pool;
 use std::env;
 use tracing::info;
-use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv().ok();
-    tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("cdc_worker=info".parse()?))
-        .init();
+    bookit_telemetry::init_telemetry("bookit-cdc-worker");
 
     info!("Starting CDC Worker...");
 
