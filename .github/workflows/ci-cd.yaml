@@ -266,9 +266,12 @@ jobs:
           build-args: |
             NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
             NEXT_PUBLIC_SOCKET_URL=${{ secrets.NEXT_PUBLIC_SOCKET_URL }}
+            NEXT_PUBLIC_WS_BASE_URL=${{ secrets.NEXT_PUBLIC_WS_BASE_URL }}
+            NEXT_PUBLIC_SEARCH_API_URL=${{ secrets.NEXT_PUBLIC_SEARCH_API_URL }}
             NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
             NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=${{ secrets.CLOUDINARY_CLOUD_NAME }}
             NEXT_PUBLIC_R2_PUBLIC_URL=${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}
+            NEXT_PUBLIC_RAZORPAY_KEY_ID=${{ secrets.NEXT_PUBLIC_RAZORPAY_KEY_ID }}
             NEXT_PUBLIC_USE_REMOTE_STOCKFISH=${{ secrets.NEXT_PUBLIC_USE_REMOTE_STOCKFISH }}
 
   update-gitops-tags:
@@ -366,12 +369,26 @@ jobs:
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
           CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MONGODB_DB: ${{ secrets.MONGODB_DB }}
+          ELASTICSEARCH_URL: ${{ secrets.ELASTICSEARCH_URL }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL }}
+          HTTP_SERVER_URL: ${{ secrets.HTTP_SERVER_URL }}
+          SEARCH_SERVER_GRPC_URL: ${{ secrets.SEARCH_SERVER_GRPC_URL }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
           INVITATION_ENCRYPTION_KEY: ${{ secrets.INVITATION_ENCRYPTION_KEY }}
           MONGODB_URL: ${{ secrets.MONGODB_URL || secrets.MONGO_DB_URL }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SUPPORT_EMAIL: ${{ secrets.SUPPORT_EMAIL }}
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_WS_BASE_URL: ${{ secrets.NEXT_PUBLIC_WS_BASE_URL }}
+          NEXT_PUBLIC_SEARCH_API_URL: ${{ secrets.NEXT_PUBLIC_SEARCH_API_URL }}
+          NEXT_PUBLIC_RAZORPAY_KEY_ID: ${{ secrets.NEXT_PUBLIC_RAZORPAY_KEY_ID }}
+          NEXT_PUBLIC_USE_REMOTE_STOCKFISH: ${{ secrets.NEXT_PUBLIC_USE_REMOTE_STOCKFISH }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           REDIS_CLUSTER_URL: ${{ secrets.REDIS_CLUSTER_URL }}
           REDIS_CLUSTER_URLS: ${{ secrets.REDIS_CLUSTER_URLS }}
