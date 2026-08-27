@@ -94,10 +94,12 @@ runtime request path.
 | `notification-worker` | RabbitMQ consumer | Creates ticket records/PDF requests and sends booking email | RabbitMQ, PostgreSQL, HTTP API, Gmail/SMTP | 1–5 pods, CPU target 75%; one consumer loop/pod |
 | `cdc-worker` | Mongo change stream + Redis Stream | Moves show changes from MongoDB into the search update stream | MongoDB, Redis | Source exists; no active base Kubernetes workload yet |
 
-The ingress currently routes public API traffic directly to `http-server`,
-WebSocket traffic to `ws-server`, web traffic to `web`, and public gRPC traffic
-to `gateway-keeper`. If the gateway is intended to enforce policy for every HTTP
-request, the ingress must route the API hostname through it instead.
+The ingress routes all public API and gRPC traffic through `gateway-keeper`.
+Gateway routes under `/api/*` forward to the internal HTTP or search services
+after gateway policy is applied. Web traffic goes directly to the Next.js
+service, and WebSocket upgrades go directly to `ws-server`; those protocols are
+not implemented by the gateway and enforce their own session/authentication
+rules.
 
 ### Known deployment gaps
 
@@ -107,17 +109,11 @@ operational:
 
 | Gap | Current state | Impact |
 |---|---|---|
-| HTTP API port | Rust binds `8082`; Deployment and Service target `3002` | Ingress and health traffic cannot reach the process |
-| WebSocket port | Rust binds `8081`; Deployment and Service target `8080` | WebSocket ingress cannot reach the process |
-| Search discovery | Search starts gRPC on `50051`, but its manifest has no container port or Service | Gateway cannot resolve/reach `search-server:50051` through Kubernetes DNS |
 | CDC deployment | `cdc-worker` source and Docker build exist, but it is absent from `apps/base` | MongoDB changes do not reach Redis Stream unless run outside this base |
-| Gateway enforcement | Public API ingress points directly to `http-server` | Gateway authentication, routing or circuit-break policies do not cover those requests |
 | Health probes | Application Deployments do not define readiness/startup/liveness probes | Kubernetes can route traffic before dependencies are usable and detect deadlocks slowly |
 
-Resolve the port mismatches by making each process read the checked-in port
-configuration or by changing the Services to the hard-coded runtime ports. Add
-a headless or ClusterIP search Service and a CDC Deployment before enabling
-their dependent flows. These are correctness issues, not tuning improvements.
+Add a CDC Deployment before relying on automatic MongoDB-to-search propagation.
+This is a correctness issue, not a tuning improvement.
 
 ## Core request and event flows
 
@@ -243,6 +239,8 @@ bookit-k8s/apps/base
 
 - Application images are stored in GHCR and pinned by CI/CD.
 - Secrets are encrypted per cluster with Sealed Secrets.
+- `BOOKIT_ENVIRONMENT` and `BOOKIT_REGION` are derived from the CI deployment
+  matrix and stored in each cluster's Sealed Secrets, not in ConfigMaps.
 - Argo CD continuously reconciles the regional desired state.
 - All application workloads currently start at one replica and can scale to
   five replicas using CPU-based HPAs.
