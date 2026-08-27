@@ -25,6 +25,7 @@ prost = "0.13"
 dashmap = "6.1"
 uuid = { version = "1.10", features = ["v4", "fast-rng", "macro-diagnostics"] }
 dotenvy = "0.15"
+tower-http = { version = "0.6", features = ["trace"] }
 
 [build-dependencies]
 tonic-build = "0.12"

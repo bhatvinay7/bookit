@@ -11,6 +11,7 @@ use axum::{
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use tower_http::trace::TraceLayer;
 
 use grpc_client::GrpcLockClient;
 use handlers::handle_socket;
@@ -40,7 +41,7 @@ async fn main() {
     let _ = dotenvy::dotenv();
     bookit_telemetry::init_telemetry("bookit-ws-server");
     let _ = rustls::crypto::ring::default_provider().install_default();
-    println!("Starting WebSocket Server with gRPC integration...");
+    tracing::info!("Starting WebSocket server with gRPC integration");
 
     let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
     let gateway_grpc_url =
@@ -71,10 +72,11 @@ async fn main() {
 
     let app = Router::new()
         .route("/ws", get(ws_handler))
-        .with_state(state);
+        .with_state(state)
+        .layer(TraceLayer::new_for_http());
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8081));
-    println!("WebSocket server listening on {}", addr);
+    tracing::info!(%addr, "WebSocket server listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }
