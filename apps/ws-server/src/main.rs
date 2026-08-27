@@ -75,7 +75,11 @@ async fn main() {
         .with_state(state)
         .layer(TraceLayer::new_for_http());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8081));
+    let ws_port = std::env::var("WS_PORT")
+        .unwrap_or_else(|_| "8081".into())
+        .parse::<u16>()
+        .expect("WS_PORT must be a valid TCP port");
+    let addr = SocketAddr::from(([0, 0, 0, 0], ws_port));
     tracing::info!(%addr, "WebSocket server listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

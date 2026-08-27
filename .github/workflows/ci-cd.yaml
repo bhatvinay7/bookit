@@ -265,14 +265,10 @@ jobs:
           cache-to: type=gha,mode=max
           build-args: |
             NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}
-            NEXT_PUBLIC_SOCKET_URL=${{ secrets.NEXT_PUBLIC_SOCKET_URL }}
             NEXT_PUBLIC_WS_BASE_URL=${{ secrets.NEXT_PUBLIC_WS_BASE_URL }}
             NEXT_PUBLIC_SEARCH_API_URL=${{ secrets.NEXT_PUBLIC_SEARCH_API_URL }}
             NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ secrets.GOOGLE_CLIENT_ID }}
-            NEXT_PUBLIC_CLOUDINARY_CLOUD_NAME=${{ secrets.CLOUDINARY_CLOUD_NAME }}
-            NEXT_PUBLIC_R2_PUBLIC_URL=${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}
             NEXT_PUBLIC_RAZORPAY_KEY_ID=${{ secrets.NEXT_PUBLIC_RAZORPAY_KEY_ID }}
-            NEXT_PUBLIC_USE_REMOTE_STOCKFISH=${{ secrets.NEXT_PUBLIC_USE_REMOTE_STOCKFISH }}
 
   update-gitops-tags:
     name: Update ArgoCD GitOps Manifests
@@ -373,7 +369,7 @@ jobs:
           ELASTICSEARCH_URL: ${{ secrets.ELASTICSEARCH_URL }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL }}
+          GATEWAY_KEEPER_GRPC_URL: ${{ secrets.GATEWAY_KEEPER_GRPC_URL }}
           HTTP_SERVER_URL: ${{ secrets.HTTP_SERVER_URL }}
           SEARCH_SERVER_GRPC_URL: ${{ secrets.SEARCH_SERVER_GRPC_URL }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
@@ -388,7 +384,6 @@ jobs:
           NEXT_PUBLIC_WS_BASE_URL: ${{ secrets.NEXT_PUBLIC_WS_BASE_URL }}
           NEXT_PUBLIC_SEARCH_API_URL: ${{ secrets.NEXT_PUBLIC_SEARCH_API_URL }}
           NEXT_PUBLIC_RAZORPAY_KEY_ID: ${{ secrets.NEXT_PUBLIC_RAZORPAY_KEY_ID }}
-          NEXT_PUBLIC_USE_REMOTE_STOCKFISH: ${{ secrets.NEXT_PUBLIC_USE_REMOTE_STOCKFISH }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           REDIS_CLUSTER_URL: ${{ secrets.REDIS_CLUSTER_URL }}
           REDIS_CLUSTER_URLS: ${{ secrets.REDIS_CLUSTER_URLS }}
@@ -403,7 +398,6 @@ jobs:
           REPLICATION_URL: ${{ secrets.REPLICATION_URL }}
           SLOT_NAME: ${{ secrets.SLOT_NAME }}
           PUBLICATION: ${{ secrets.PUBLICATION }}
-          NEXT_PUBLIC_SOCKET_URL: ${{ secrets.NEXT_PUBLIC_SOCKET_URL }}
         run: |
           wget -qO /tmp/kubeseal.tar.gz https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.26.2/kubeseal-0.26.2-linux-amd64.tar.gz
           tar -xzf /tmp/kubeseal.tar.gz -C /tmp kubeseal
