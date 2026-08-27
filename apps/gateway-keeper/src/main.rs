@@ -19,7 +19,7 @@ use axum::{
 use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use redis_conn::{SingleNodeLock, establish_pool};
 use serde::{Deserialize, Serialize};
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
@@ -184,7 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/health", axum::routing::any(proxy::proxy_to_http_server))
         .nest("/api", proxy_router)
         .with_state(state)
-        .layer(CorsLayer::permissive())
+        .layer(configured_cors())
         .layer(TraceLayer::new_for_http());
 
     let addr: SocketAddr = std::env::var("GATEWAY_KEEPER_ADDR")
@@ -194,6 +194,28 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).await?;
     Ok(())
+}
+
+fn configured_cors() -> CorsLayer {
+    let origins = std::env::var("CORS_ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:3000".into())
+        .split(',')
+        .filter_map(|origin| origin.trim().parse::<axum::http::HeaderValue>().ok())
+        .collect::<Vec<_>>();
+    CorsLayer::new()
+        .allow_origin(AllowOrigin::list(origins))
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+            axum::http::Method::PATCH,
+            axum::http::Method::DELETE,
+            axum::http::Method::OPTIONS,
+        ])
+        .allow_headers([
+            axum::http::header::AUTHORIZATION,
+            axum::http::header::CONTENT_TYPE,
+        ])
 }
 
 async fn lock_seats(
