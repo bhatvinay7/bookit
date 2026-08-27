@@ -1,6 +1,7 @@
 use diesel::pg::PgConnection;
-use diesel::r2d2::{self, ConnectionManager, Pool};
+use diesel::r2d2::{ConnectionManager, Pool};
 use std::env;
+use std::time::Duration;
 
 pub type DbPool = Pool<ConnectionManager<PgConnection>>;
 
@@ -11,6 +12,12 @@ pub fn create_db_pool() -> DbPool {
 
     let manager = ConnectionManager::<PgConnection>::new(database_url);
     Pool::builder()
+        .connection_timeout(Duration::from_secs(
+            env::var("DB_CONNECTION_TIMEOUT_SECS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(60),
+        ))
         .test_on_check_out(true)
         .build(manager)
         .expect("Failed to create database pool.")

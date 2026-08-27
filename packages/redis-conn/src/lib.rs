@@ -30,6 +30,12 @@ pub async fn establish_pool() -> Result<RedisPool, redis::RedisError> {
 
     bb8::Pool::builder()
         .max_size(30)
+        .connection_timeout(Duration::from_secs(
+            std::env::var("REDIS_CONNECTION_TIMEOUT_SECS")
+                .ok()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(60),
+        ))
         .idle_timeout(None)
         .max_lifetime(None)
         .test_on_check_out(true)
@@ -39,9 +45,9 @@ pub async fn establish_pool() -> Result<RedisPool, redis::RedisError> {
 
 pub async fn establish_seat_lock() -> Result<std::sync::Arc<dyn SeatLock>, redis::RedisError> {
     dotenvy::dotenv().ok();
-    let app_mode = std::env::var("APP_MODE").unwrap_or_else(|_| "dev".to_string());
+    let redis_mode = std::env::var("REDIS_MODE").unwrap_or_else(|_| "single".to_string());
 
-    if app_mode == "production" {
+    if redis_mode.eq_ignore_ascii_case("cluster") {
         let cluster_url = std::env::var("REDIS_CLUSTER_URL")
             .expect("REDIS_CLUSTER_URL must be set in production");
         let urls = vec![cluster_url];

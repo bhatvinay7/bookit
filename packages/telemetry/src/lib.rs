@@ -76,7 +76,7 @@ pub fn init_telemetry(service_name: &'static str) {
         .with_span_list(true)
         .with_target(true);
 
-    // Respect RUST_LOG environment variable for filtering log levels
+    // Respect the standard RUST_LOG environment variable for filtering.
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     Registry::default()
