@@ -64,7 +64,7 @@ export interface CreateScheduleRequest {
   prices: Record<LayoutSeatClass, string>;
   venue_name?: string;
   venue_address?: string;
-  venue_city?: string;
+  venue_city: string;
   venue_state?: string;
 }
 

@@ -29,9 +29,15 @@ export default function ShowDetailsPage() {
   useEffect(() => {
     async function fetchShowAndSchedules() {
       try {
+        const schedulesUrl = new URL(`${API_URL}/api/user/schedules_v2/show/${showId}`);
+        const selectedCity = sessionStorage.getItem("bookit_city");
+        if (selectedCity && selectedCity !== "All") {
+          schedulesUrl.searchParams.set("city", selectedCity);
+        }
+
         const [showRes, schedulesRes] = await Promise.all([
           fetch(`${API_URL}/api/user/shows/${showId}`),
-          fetch(`${API_URL}/api/user/schedules_v2/show/${showId}`)
+          fetch(schedulesUrl)
         ]);
 
         if (!showRes.ok) throw new Error("Failed to fetch show details");

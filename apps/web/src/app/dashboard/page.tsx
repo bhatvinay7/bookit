@@ -227,8 +227,8 @@ function DashboardContent() {
       {detailModalShow && (
         <ShowDetailModal 
           show={detailModalShow} 
+          city={selectedCity}
           onClose={() => setDetailModalShow(null)} 
-          css={css} 
         />
       )}
     </div>
