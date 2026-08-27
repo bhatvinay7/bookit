@@ -1,6 +1,6 @@
 use opentelemetry::{KeyValue, global};
-use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_otlp::WithExportConfig;
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use opentelemetry_sdk::{
     Resource,
     metrics::{MeterProviderBuilder, PeriodicReader},

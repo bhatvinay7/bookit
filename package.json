@@ -8,7 +8,10 @@
   "scripts": {
     "build": "turbo run build",
     "dev": "turbo run dev",
-    "lint": "turbo run lint"
+    "lint": "turbo run lint",
+    "seed:searchable": "node scripts/seed_searchable_shows.js",
+    "seed:movie-data": "node scripts/update_movie_data.js",
+    "seed:schedules:two-weeks": "node scripts/ensure_two_week_schedules.js"
   },
   "devDependencies": {
     "turbo": "latest"

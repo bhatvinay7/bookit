@@ -1,7 +1,9 @@
 import redis
 import json
+import os
 
-r = redis.from_url("rediss://default:AVNS_1lQHyA9NXSNGAPHHnc1@valkey-32066234-bhatvinay75-d939.d.aivencloud.com:22543")
+redis_url = os.environ["REDIS_URL"]
+r = redis.from_url(redis_url)
 event = {
     "SeatLocked": {
         "user_id": 1,

@@ -41,10 +41,18 @@ impl SearchService for GrpcSearchService {
             Err(e) => return Err(Status::internal(format!("Database error: {}", e))),
         };
 
-        let active_show_ids: Vec<String> = schedules::table
+        let mut active_schedules = schedules::table
             .select(schedules::mongo_show_id)
             .filter(schedules::start_time.gt(chrono::Utc::now()))
             .filter(schedules::deleted_at.is_null())
+            .into_boxed();
+
+        let city = req.city.trim();
+        if !city.is_empty() && !city.eq_ignore_ascii_case("All") {
+            active_schedules = active_schedules.filter(schedules::venue_city.eq(city));
+        }
+
+        let active_show_ids: Vec<String> = active_schedules
             .distinct()
             .load::<String>(&mut conn)
             .unwrap_or_default();
@@ -55,14 +63,9 @@ impl SearchService for GrpcSearchService {
             }));
         }
 
-        let mut filters = vec![json!({
+        let filters = vec![json!({
             "terms": { "_id": active_show_ids }
         })];
-        if !req.city.trim().is_empty() && req.city != "All" {
-            filters.push(json!({
-                "match_phrase": { "city": req.city.trim() }
-            }));
-        }
 
         let es_query = json!({
             "query": {

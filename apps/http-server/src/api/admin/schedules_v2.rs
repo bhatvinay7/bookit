@@ -19,7 +19,53 @@ use bookit_db::{
     models::{LayoutSeatClass, Schedule, ScheduleSeat, SeatLayoutSeat, SeatSource, ShowType},
     schema::{schedule_seats, schedules, seat_layout_seats},
 };
-use bookit_redis::keys::{cache_schedule_key, cache_schedules_active_key};
+use bookit_mongo::models::{Show, ShowType as MongoShowType};
+use bookit_redis::keys::{
+    cache_movies_key, cache_schedule_key, cache_schedules_active_key, cache_show_schedules_key,
+};
+
+fn show_types_match(postgres: &ShowType, mongo: &MongoShowType) -> bool {
+    matches!(
+        (postgres, mongo),
+        (ShowType::Movie, MongoShowType::Movie)
+            | (ShowType::Concert, MongoShowType::Concert)
+            | (ShowType::Event, MongoShowType::Event)
+            | (ShowType::GameEvent, MongoShowType::GameEvent)
+    )
+}
+
+fn show_type_name(show_type: &ShowType) -> &'static str {
+    match show_type {
+        ShowType::Movie => "Movie",
+        ShowType::Concert => "Concert",
+        ShowType::Event => "Event",
+        ShowType::GameEvent => "GameEvent",
+    }
+}
+
+async fn invalidate_show_schedule_caches(state: &Arc<AppState>, schedule: &Schedule) {
+    invalidate_async(state, &cache_schedules_active_key()).await;
+    invalidate_async(
+        state,
+        &cache_show_schedules_key(&schedule.mongo_show_id, schedule.venue_city.as_deref()),
+    )
+    .await;
+    invalidate_async(
+        state,
+        &cache_show_schedules_key(&schedule.mongo_show_id, None),
+    )
+    .await;
+
+    let show_type = show_type_name(&schedule.show_type);
+    for key in [
+        cache_movies_key(None, None),
+        cache_movies_key(Some(show_type), None),
+        cache_movies_key(None, schedule.venue_city.as_deref()),
+        cache_movies_key(Some(show_type), schedule.venue_city.as_deref()),
+    ] {
+        invalidate_async(state, &key).await;
+    }
+}
 
 // ─── DTOs ─────────────────────────────────────────────────────────────────────
 
@@ -40,7 +86,7 @@ pub struct CreateScheduleRequest {
     pub prices: std::collections::HashMap<String, String>,
     pub venue_name: Option<String>,
     pub venue_address: Option<String>,
-    pub venue_city: Option<String>,
+    pub venue_city: String,
     pub venue_state: Option<String>,
 }
 
@@ -190,6 +236,32 @@ pub async fn create_schedule(
     State(state): State<Arc<AppState>>,
     Json(body): Json<CreateScheduleRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    let venue_city = body.venue_city.trim().to_owned();
+    if venue_city.is_empty() {
+        return Err(AppError::bad_request("venue_city is required"));
+    }
+
+    // PostgreSQL cannot enforce a foreign key into MongoDB, so validate the
+    // application-level reference before creating the schedule.
+    let mongo_show_id = body.mongo_show_id.trim().to_owned();
+    let show_oid = bson::oid::ObjectId::parse_str(&mongo_show_id)
+        .map_err(|_| AppError::bad_request("mongo_show_id must be a valid MongoDB ObjectId"))?;
+    let shows = state
+        .mongo_client
+        .database(&state.mongo_db_name)
+        .collection::<Show>("shows");
+    let mongo_show = shows
+        .find_one(bson::doc! { "_id": show_oid, "deleted_at": null })
+        .await
+        .map_err(|e| AppError::internal(e.to_string()))?
+        .ok_or_else(|| AppError::not_found("Show not found or has been deleted"))?;
+
+    if !show_types_match(&body.show_type, &mongo_show.show_type) {
+        return Err(AppError::bad_request(
+            "show_type does not match the referenced MongoDB show",
+        ));
+    }
+
     // Validate times
     let date = chrono::NaiveDate::parse_from_str(&body.date, "%Y-%m-%d")
         .map_err(|_| AppError::bad_request("Invalid date format, expected YYYY-MM-DD"))?;
@@ -230,7 +302,7 @@ pub async fn create_schedule(
 
     // Insert schedule
     let new_schedule = NewSchedule {
-        mongo_show_id: body.mongo_show_id.clone(),
+        mongo_show_id,
         show_type: body.show_type.clone(),
         layout_id: Some(body.layout_id),
         date,
@@ -240,7 +312,7 @@ pub async fn create_schedule(
         booking_open_at,
         venue_name: body.venue_name,
         venue_address: body.venue_address,
-        venue_city: body.venue_city,
+        venue_city: Some(venue_city),
         venue_state: body.venue_state,
     };
 
@@ -302,8 +374,7 @@ pub async fn create_schedule(
         .execute(&mut conn)
         .map_err(|e| AppError::internal(e.to_string()))?;
 
-    // Invalidate active schedules cache
-    invalidate_async(&state, &cache_schedules_active_key()).await;
+    invalidate_show_schedule_caches(&state, &schedule).await;
 
     Ok((
         StatusCode::CREATED,
@@ -467,13 +538,19 @@ pub async fn delete_schedule(
         .get()
         .map_err(|e| AppError::internal(e.to_string()))?;
 
+    let schedule: Schedule = schedules::table
+        .find(schedule_id)
+        .filter(schedules::deleted_at.is_null())
+        .first(&mut conn)
+        .map_err(|_| AppError::not_found("Schedule not found"))?;
+
     diesel::update(schedules::table.find(schedule_id))
         .set(schedules::deleted_at.eq(Some(Utc::now())))
         .execute(&mut conn)
         .map_err(|e| AppError::internal(e.to_string()))?;
 
     invalidate_async(&state, &cache_schedule_key(schedule_id)).await;
-    invalidate_async(&state, &cache_schedules_active_key()).await;
+    invalidate_show_schedule_caches(&state, &schedule).await;
 
     Ok(Json(serde_json::json!({ "cancelled": true })))
 }
@@ -499,6 +576,11 @@ pub async fn update_schedule(
     Path(schedule_id): Path<i32>,
     Json(body): Json<UpdateScheduleRequest>,
 ) -> Result<impl IntoResponse, AppError> {
+    let venue_city = body.venue_city.as_deref().map(str::trim);
+    if venue_city.is_some_and(str::is_empty) {
+        return Err(AppError::bad_request("venue_city must not be empty"));
+    }
+
     let mut conn = state
         .db_pool
         .get()
@@ -558,7 +640,7 @@ pub async fn update_schedule(
         booking_open_at,
         venue_name: body.venue_name.as_deref(),
         venue_address: body.venue_address.as_deref(),
-        venue_city: body.venue_city.as_deref(),
+        venue_city,
         venue_state: body.venue_state.as_deref(),
     };
 
@@ -568,12 +650,15 @@ pub async fn update_schedule(
         .map_err(|e| AppError::internal(e.to_string()))?;
 
     invalidate_async(&state, &cache_schedule_key(schedule_id)).await;
-    invalidate_async(&state, &cache_schedules_active_key()).await;
 
     let updated: Schedule = schedules::table
         .find(schedule_id)
         .first(&mut conn)
-        .unwrap_or(existing);
+        .unwrap_or_else(|_| existing.clone());
+    invalidate_show_schedule_caches(&state, &existing).await;
+    if existing.venue_city != updated.venue_city {
+        invalidate_show_schedule_caches(&state, &updated).await;
+    }
     Ok(Json(updated))
 }
 
