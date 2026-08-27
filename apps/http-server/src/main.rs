@@ -1,9 +1,13 @@
-use axum::{Router, routing::get};
+use axum::{
+    Router,
+    http::{HeaderValue, Method, header},
+    routing::get,
+};
 use dotenvy::dotenv;
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_http::cors::CorsLayer;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::trace::TraceLayer;
 
 use http_server::api;
@@ -15,7 +19,22 @@ async fn main() {
     bookit_telemetry::init_telemetry("bookit-http-server");
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let cors = CorsLayer::permissive();
+    let allowed_origins = env::var("CORS_ALLOWED_ORIGINS")
+        .unwrap_or_else(|_| "http://localhost:3000".into())
+        .split(',')
+        .filter_map(|origin| origin.trim().parse::<HeaderValue>().ok())
+        .collect::<Vec<_>>();
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::list(allowed_origins))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
 
     // ── PostgreSQL ────────────────────────────────────────────────────────────
     let db_pool = bookit_db::db::create_db_pool();
@@ -90,7 +109,11 @@ async fn main() {
         .layer(cors)
         .layer(TraceLayer::new_for_http());
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8082));
+    let http_port = env::var("HTTP_PORT")
+        .unwrap_or_else(|_| "8082".into())
+        .parse::<u16>()
+        .expect("HTTP_PORT must be a valid TCP port");
+    let addr = SocketAddr::from(([0, 0, 0, 0], http_port));
     tracing::info!(%addr, "BookIt API listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

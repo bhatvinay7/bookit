@@ -69,9 +69,9 @@ fn env_u32(name: &str, default: u32) -> u32 {
 
 pub async fn establish_seat_lock() -> Result<std::sync::Arc<dyn SeatLock>, redis::RedisError> {
     dotenvy::dotenv().ok();
-    let app_mode = std::env::var("APP_MODE").unwrap_or_else(|_| "dev".to_string());
+    let redis_mode = std::env::var("REDIS_MODE").unwrap_or_else(|_| "single".to_string());
 
-    if app_mode == "production" {
+    if redis_mode.eq_ignore_ascii_case("cluster") {
         let cluster_url = std::env::var("REDIS_CLUSTER_URL")
             .expect("REDIS_CLUSTER_URL must be set in production");
         let urls = vec![cluster_url];

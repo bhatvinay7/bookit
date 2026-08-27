@@ -60,7 +60,11 @@ async fn main() {
 
     // Start gRPC Server
     let grpc_state = app_state.clone();
-    let grpc_addr: SocketAddr = "0.0.0.0:50051".parse().unwrap();
+    let grpc_port = env::var("SEARCH_GRPC_PORT")
+        .unwrap_or_else(|_| "50051".into())
+        .parse::<u16>()
+        .expect("SEARCH_GRPC_PORT must be a valid TCP port");
+    let grpc_addr = SocketAddr::from(([0, 0, 0, 0], grpc_port));
     tokio::spawn(async move {
         tracing::info!(%grpc_addr, "Search gRPC server listening");
         tonic::transport::Server::builder()
@@ -79,7 +83,11 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .with_state(app_state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8084));
+    let http_port = env::var("SEARCH_HTTP_PORT")
+        .unwrap_or_else(|_| "8084".into())
+        .parse::<u16>()
+        .expect("SEARCH_HTTP_PORT must be a valid TCP port");
+    let addr = SocketAddr::from(([0, 0, 0, 0], http_port));
     tracing::info!(%addr, "Search HTTP health server listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();

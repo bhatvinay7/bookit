@@ -1,11 +1,38 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import Image from "next/image";
+import Script from "next/script";
 import { useRouter } from "next/navigation";
 import { ArrowRight, Ticket } from "lucide-react";
 import { useLogin, ApiError } from "@/hooks/useApi";
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const GOOGLE_CLIENT_ID = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+
+interface GoogleCredentialResponse {
+  credential: string;
+}
+
+declare global {
+  interface Window {
+    google?: {
+      accounts: {
+        id: {
+          initialize(config: {
+            client_id: string;
+            callback(response: GoogleCredentialResponse): void;
+          }): void;
+          renderButton(
+            element: HTMLElement,
+            options: Record<string, string | number>,
+          ): void;
+        };
+      };
+    };
+  }
+}
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -13,6 +40,7 @@ export default function LoginPage() {
   const [errorMsg, setErrorMsg] = useState("");
   const router = useRouter();
   const loginMutation = useLogin();
+  const googleButtonRef = useRef<HTMLDivElement>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,8 +57,48 @@ export default function LoginPage() {
     });
   };
 
+  const handleGoogleCredential = async (response: GoogleCredentialResponse) => {
+    setErrorMsg("");
+    try {
+      const result = await fetch(`${API_URL}/api/auth/google`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ credential: response.credential }),
+      });
+      const data = await result.json();
+      if (!result.ok) throw new Error(data.error || "Google login failed.");
+      localStorage.setItem("user_token", data.token);
+      localStorage.setItem("user_email", data.user.email);
+      window.location.href = "/dashboard";
+    } catch (error) {
+      setErrorMsg(error instanceof Error ? error.message : "Google login failed.");
+    }
+  };
+
+  const initializeGoogleLogin = () => {
+    if (!GOOGLE_CLIENT_ID || !window.google || !googleButtonRef.current) return;
+    window.google.accounts.id.initialize({
+      client_id: GOOGLE_CLIENT_ID,
+      callback: handleGoogleCredential,
+    });
+    window.google.accounts.id.renderButton(googleButtonRef.current, {
+      theme: "outline",
+      size: "large",
+      shape: "pill",
+      text: "signin_with",
+      width: 320,
+    });
+  };
+
   return (
     <div className="min-h-screen flex w-full font-sans overflow-hidden relative">
+      {GOOGLE_CLIENT_ID && (
+        <Script
+          src="https://accounts.google.com/gsi/client"
+          strategy="afterInteractive"
+          onLoad={initializeGoogleLogin}
+        />
+      )}
       
       {/* ════ BACKGROUND MATCHING DASHBOARD SHOWCASE ════ */}
       <div className="fixed inset-0 z-0 pointer-events-none">
@@ -130,6 +198,17 @@ export default function LoginPage() {
               <ArrowRight className="w-5 h-5" />
             </button>
           </form>
+
+          {GOOGLE_CLIENT_ID && (
+            <>
+              <div className="my-6 flex items-center gap-3 text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                <span className="h-px flex-1 bg-[var(--border)]" />
+                or
+                <span className="h-px flex-1 bg-[var(--border)]" />
+              </div>
+              <div ref={googleButtonRef} className="flex min-h-10 justify-center" />
+            </>
+          )}
 
           <p className="mt-8 text-center text-[var(--text-secondary)] font-medium">
             Don't have an account?{" "}
