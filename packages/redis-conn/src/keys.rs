@@ -6,9 +6,21 @@ pub fn cache_show_key(mongo_show_id: &str) -> String {
     format!("cache:show:{}", mongo_show_id)
 }
 
-/// Get the Redis key for caching a Schedule (including its layout details).
+/// Get the Redis key for caching schedule metadata.
+/// Seat state is stored separately in [`schedule_seat_bitmap`].
 pub fn cache_schedule_key(schedule_id: i32) -> String {
     format!("cache:schedule:{}", schedule_id)
+}
+
+/// Get the Redis key for a show's schedule metadata, optionally scoped to a city.
+/// This cache never contains seat-layout or live seat-state data.
+pub fn cache_show_schedules_key(mongo_show_id: &str, city: Option<&str>) -> String {
+    let city = city
+        .map(str::trim)
+        .filter(|city| !city.is_empty() && !city.eq_ignore_ascii_case("All"))
+        .map(str::to_owned)
+        .unwrap_or_else(|| "all".to_string());
+    format!("cache:show:{}:schedules:city:{}", mongo_show_id, city)
 }
 
 /// Get the Redis key for the list of active/upcoming schedules.
@@ -16,21 +28,33 @@ pub fn cache_schedules_active_key() -> String {
     "cache:schedules:active".to_string()
 }
 
-/// Get the Redis key for live seat availability for a specific schedule.
-/// Note: This is usually highly dynamic and might be better handled via a bitmap or direct DB query,
-/// but providing a key for fast-path lookups.
-pub fn cache_schedule_seats_key(schedule_id: i32) -> String {
-    format!("cache:schedule:{}:seats", schedule_id)
-}
-
 pub const CACHE_SHOWS: &str = "cache:shows:all";
 pub const CACHE_DASHBOARD_GRID: &str = "cache:dashboard:grid";
 pub const MOVIES_ALL: &str = "cache:movies:all";
+
+/// Get the Redis key for shows that have active schedules, optionally scoped
+/// by show type and schedule city.
+pub fn cache_movies_key(show_type: Option<&str>, city: Option<&str>) -> String {
+    let mut key = MOVIES_ALL.to_string();
+    if let Some(show_type) = show_type.filter(|show_type| !show_type.eq_ignore_ascii_case("All")) {
+        key.push(':');
+        key.push_str(show_type);
+    }
+    if let Some(city) = city
+        .map(str::trim)
+        .filter(|city| !city.is_empty() && !city.eq_ignore_ascii_case("All"))
+    {
+        key.push_str(":city:");
+        key.push_str(city);
+    }
+    key
+}
 
 pub const TTL_24_HOURS: u64 = 24 * 60 * 60;
 pub const TTL_SHOWS: u64 = TTL_24_HOURS;
 pub const TTL_DASHBOARD_GRID: u64 = TTL_24_HOURS;
 pub const TTL_MOVIES_ALL: u64 = TTL_24_HOURS;
+pub const TTL_SHOW_SCHEDULES: u64 = TTL_24_HOURS;
 
 pub fn movie_detail(id: i32) -> String {
     format!("cache:movie:{}:detail", id)
