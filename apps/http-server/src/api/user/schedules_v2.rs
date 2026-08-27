@@ -1,12 +1,13 @@
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
 };
 use bson::doc;
 use chrono::Utc;
 use diesel::prelude::*;
+use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
@@ -15,36 +16,43 @@ use bookit_db::{
     schema::{schedule_seats, schedules},
 };
 use bookit_mongo::models::Show;
-use bookit_redis::keys::{cache_schedule_key, cache_schedules_active_key, cache_show_key};
+use bookit_redis::keys::{
+    TTL_SHOW_SCHEDULES, cache_schedule_key, cache_schedules_active_key, cache_show_key,
+    cache_show_schedules_key,
+};
 
 use crate::api::state::AppState;
 use crate::helpers::errors::AppError;
 use crate::services::cache::{get_async_cached, set_async_cached};
 
-fn bitmap_seat_status(bitmap: &[u8], seat_id: i32) -> &'static str {
+fn bitmap_seat_status(bitmap: &[u8], seat_id: i32) -> Option<&'static str> {
     let Some(bit_offset) = usize::try_from(seat_id)
         .ok()
         .and_then(|id| id.checked_mul(2))
     else {
-        return "Available";
+        return None;
     };
-    let byte = bitmap.get(bit_offset / 8).copied().unwrap_or_default();
+    let byte = bitmap.get(bit_offset / 8).copied()?;
     let state = (byte >> (6 - (bit_offset % 8))) & 0b11;
 
-    match state {
+    Some(match state {
         0b01 => "Locked",
         0b10 => "Booked",
         _ => "Available",
-    }
+    })
 }
 
-fn bitmap_snapshot(rconn: &mut redis::Connection, bitmap_key: &str) -> Vec<u8> {
+fn bitmap_snapshot(rconn: &mut redis::Connection, bitmap_key: &str) -> Option<Vec<u8>> {
     redis::cmd("GET")
         .arg(bitmap_key)
         .query::<Option<Vec<u8>>>(rconn)
         .ok()
         .flatten()
-        .unwrap_or_default()
+}
+
+fn selected_city(city: Option<&str>) -> Option<&str> {
+    city.map(str::trim)
+        .filter(|city| !city.is_empty() && !city.eq_ignore_ascii_case("All"))
 }
 
 #[cfg(test)]
@@ -53,13 +61,26 @@ mod tests {
 
     #[test]
     fn bitmap_seat_status_decodes_redis_bitfield_order() {
-        assert_eq!(bitmap_seat_status(&[0b0001_1000], 1), "Locked");
-        assert_eq!(bitmap_seat_status(&[0b0001_1000], 2), "Booked");
+        assert_eq!(bitmap_seat_status(&[0b0001_1000], 1), Some("Locked"));
+        assert_eq!(bitmap_seat_status(&[0b0001_1000], 2), Some("Booked"));
     }
 
     #[test]
-    fn bitmap_seat_status_defaults_to_available() {
-        assert_eq!(bitmap_seat_status(&[], 12), "Available");
+    fn bitmap_seat_status_uses_database_fallback_when_bit_is_missing() {
+        assert_eq!(bitmap_seat_status(&[], 12), None);
+    }
+
+    #[test]
+    fn bitmap_seat_status_reads_explicit_available_state() {
+        assert_eq!(bitmap_seat_status(&[0], 1), Some("Available"));
+    }
+
+    #[test]
+    fn selected_city_ignores_empty_and_all_values() {
+        assert_eq!(selected_city(None), None);
+        assert_eq!(selected_city(Some("  ")), None);
+        assert_eq!(selected_city(Some("all")), None);
+        assert_eq!(selected_city(Some(" Bengaluru ")), Some("Bengaluru"));
     }
 }
 
@@ -160,23 +181,23 @@ pub async fn get_schedule_details(
     Path(id): Path<i32>,
 ) -> Result<impl IntoResponse, AppError> {
     let cache_key = cache_schedule_key(id);
-
-    if let Some(val) = get_async_cached::<Value>(&state, &cache_key).await {
-        return Ok((StatusCode::OK, Json(val)));
-    }
-
-    let mut conn = state
-        .db_pool
-        .get()
-        .map_err(|e| AppError::internal(e.to_string()))?;
-
-    let schedule: Schedule = schedules::table
-        .find(id)
-        .first(&mut conn)
-        .map_err(|e| match e {
-            diesel::NotFound => AppError::not_found("Schedule not found"),
-            _ => AppError::internal(e.to_string()),
-        })?;
+    let schedule: Schedule = if let Some(cached) = get_async_cached(&state, &cache_key).await {
+        cached
+    } else {
+        let mut conn = state
+            .db_pool
+            .get()
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        let loaded: Schedule = schedules::table
+            .find(id)
+            .first(&mut conn)
+            .map_err(|e| match e {
+                diesel::NotFound => AppError::not_found("Schedule not found"),
+                _ => AppError::internal(e.to_string()),
+            })?;
+        set_async_cached(&state, &cache_key, &loaded, TTL_SHOW_SCHEDULES).await;
+        loaded
+    };
 
     if schedule.deleted_at.is_some() {
         return Err(AppError::not_found("Schedule deleted"));
@@ -198,6 +219,7 @@ pub async fn get_schedule_details(
 
     let res = serde_json::json!({
         "id": schedule.id,
+        "mongo_show_id": schedule.mongo_show_id,
         "show_type": schedule.show_type,
         "layout_id": schedule.layout_id,
         "date": schedule.date,
@@ -206,11 +228,12 @@ pub async fn get_schedule_details(
         "end_time": schedule.end_time,
         "booking_open_at": schedule.booking_open_at,
         "seconds_until_booking_open": seconds_until_booking_open,
+        "venue_name": schedule.venue_name,
+        "venue_address": schedule.venue_address,
+        "venue_city": schedule.venue_city,
+        "venue_state": schedule.venue_state,
         "show": show_val
     });
-
-    // Cache schedule detail for 5 minutes
-    set_async_cached(&state, &cache_key, &res, 300).await;
 
     Ok((StatusCode::OK, Json(res)))
 }
@@ -242,29 +265,29 @@ pub async fn get_schedule_seats(
     let bitmap_key = bookit_redis::keys::schedule_seat_bitmap(id);
     let bitmap = redis_conn
         .as_mut()
-        .map(|rconn| bitmap_snapshot(rconn, &bitmap_key))
-        .unwrap_or_default();
+        .and_then(|rconn| bitmap_snapshot(rconn, &bitmap_key));
 
     let mut seats_json = Vec::new();
     for seat in seats {
-        let mut status_str = match seat.status {
+        let database_status = match seat.status {
             bookit_db::models::SeatStatus::Available => "Available".to_string(),
             bookit_db::models::SeatStatus::Locked => "Locked".to_string(),
             bookit_db::models::SeatStatus::Booked => "Booked".to_string(),
         };
+        let status_str = bitmap
+            .as_deref()
+            .and_then(|snapshot| bitmap_seat_status(snapshot, seat.id))
+            .map(str::to_owned)
+            .unwrap_or(database_status);
         let mut locked_by_user_id: Option<i32> = None;
 
-        let bitmap_status = bitmap_seat_status(&bitmap, seat.id);
-        if bitmap_status != "Available" {
-            status_str = bitmap_status.to_string();
-            if bitmap_status == "Locked" {
-                if let Some(ref mut rconn) = redis_conn {
-                    locked_by_user_id = redis::cmd("GET")
-                        .arg(bookit_redis::keys::seat_lock_key(id, seat.id))
-                        .query(rconn)
-                        .ok()
-                        .flatten();
-                }
+        if status_str == "Locked" {
+            if let Some(ref mut rconn) = redis_conn {
+                locked_by_user_id = redis::cmd("GET")
+                    .arg(bookit_redis::keys::seat_lock_key(id, seat.id))
+                    .query(rconn)
+                    .ok()
+                    .flatten();
             }
         }
 
@@ -294,27 +317,51 @@ pub async fn get_schedule_seats(
 }
 
 /// GET /api/user/schedules_v2/show/:show_id
+#[derive(Debug, Deserialize)]
+pub struct ShowSchedulesQuery {
+    pub city: Option<String>,
+}
+
 pub async fn get_schedules_for_show(
     State(state): State<Arc<AppState>>,
     Path(show_id): Path<String>,
+    Query(query): Query<ShowSchedulesQuery>,
 ) -> Result<impl IntoResponse, AppError> {
     let mut conn = state
         .db_pool
         .get()
         .map_err(|e| AppError::internal(e.to_string()))?;
     let now = Utc::now();
+    let city = selected_city(query.city.as_deref());
+    let cache_key = cache_show_schedules_key(&show_id, city);
 
-    let rows: Vec<Schedule> = schedules::table
-        .filter(schedules::mongo_show_id.eq(&show_id))
-        .filter(schedules::deleted_at.is_null())
-        .filter(schedules::start_time.gt(now))
-        .order(schedules::start_time.asc())
-        .load(&mut conn)
-        .map_err(|e| AppError::internal(e.to_string()))?;
+    let rows: Vec<Schedule> = if let Some(cached) = get_async_cached(&state, &cache_key).await {
+        cached
+    } else {
+        let mut schedules_query = schedules::table
+            .filter(schedules::mongo_show_id.eq(&show_id))
+            .filter(schedules::deleted_at.is_null())
+            .filter(schedules::start_time.gt(now))
+            .into_boxed();
+
+        if let Some(city) = city {
+            schedules_query = schedules_query.filter(schedules::venue_city.eq(city));
+        }
+
+        let loaded: Vec<Schedule> = schedules_query
+            .order(schedules::start_time.asc())
+            .load(&mut conn)
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        set_async_cached(&state, &cache_key, &loaded, TTL_SHOW_SCHEDULES).await;
+        loaded
+    };
 
     let mut results = Vec::new();
 
-    for s in rows {
+    for s in rows
+        .into_iter()
+        .filter(|schedule| schedule.deleted_at.is_none() && schedule.start_time > now)
+    {
         let seconds_until_booking_open = (s.booking_open_at - Utc::now()).num_seconds();
 
         let total: i64 = schedule_seats::table

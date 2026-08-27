@@ -108,8 +108,8 @@ function CreateScheduleWizard({
   }, [selectedShow, token]);
 
   const handleCreate = async () => {
-    if (!selectedShow || !selectedLayout || !date || !endTime || !bookingOpen) {
-      setError("Show, Layout, Date, End Time and Booking Open time are required"); return;
+    if (!selectedShow || !selectedLayout || !date || !endTime || !bookingOpen || !venueCity.trim()) {
+      setError("Show, Layout, Date, End Time, Booking Open time and City are required"); return;
     }
     setSaving(true); setError("");
     try {
@@ -128,7 +128,7 @@ function CreateScheduleWizard({
           prices,
           venue_name:      venueName || undefined,
           venue_address:   venueAddress || undefined,
-          venue_city:      venueCity || undefined,
+          venue_city:      venueCity.trim(),
           venue_state:     venueState || undefined,
         }),
       });
@@ -369,7 +369,7 @@ function CreateScheduleWizard({
           </div>
 
           <div style={{ padding: "16px", background: "var(--bg-input)", borderRadius: 10 }}>
-            <p className="admin-label" style={{ marginBottom: 12 }}>Venue Details (Optional)</p>
+            <p className="admin-label" style={{ marginBottom: 12 }}>Venue Details</p>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
               <div>
                 <label className="admin-label">Venue Name</label>
@@ -377,8 +377,8 @@ function CreateScheduleWizard({
                   value={venueName} onChange={e => setVenueName(e.target.value)} />
               </div>
               <div>
-                <label className="admin-label">City</label>
-                <input className="admin-input" placeholder="e.g. New York"
+                <label className="admin-label">City *</label>
+                <input className="admin-input" placeholder="e.g. Bengaluru" required
                   value={venueCity} onChange={e => setVenueCity(e.target.value)} />
               </div>
               <div>
@@ -665,6 +665,10 @@ function UpdateScheduleModal({
 
   const handleUpdate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!venueCity.trim()) {
+      setError("City is required");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -678,7 +682,7 @@ function UpdateScheduleModal({
           end_time: endTime ? new Date(endTime).toISOString() : undefined,
           booking_open_at: bookingOpen ? new Date(bookingOpen).toISOString() : undefined,
           venue_name: venueName || undefined,
-          venue_city: venueCity || undefined,
+          venue_city: venueCity.trim(),
         }),
       });
       if (!r.ok) throw new Error(await r.text());
@@ -766,11 +770,12 @@ function UpdateScheduleModal({
           />
         </div>
         <div>
-          <label className="admin-label">Venue City</label>
+          <label className="admin-label">Venue City *</label>
           <input
             type="text"
             className="admin-input"
             placeholder="e.g. Mumbai"
+            required
             value={venueCity}
             onChange={(e) => setVenueCity(e.target.value)}
           />

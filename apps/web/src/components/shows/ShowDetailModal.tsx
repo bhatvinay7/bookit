@@ -8,24 +8,27 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 interface ShowDetailModalProps {
   show: Show | null;
+  city?: string;
   onClose: () => void;
-  css: (v: string) => string;
 }
 
-export function ShowDetailModal({ show, onClose, css }: ShowDetailModalProps) {
+export function ShowDetailModal({ show, city = "All", onClose }: ShowDetailModalProps) {
   const router = useRouter();
   
   const [schedules, setSchedules] = useState<ScheduleV2[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [selectedSlot, setSelectedSlot] = useState<string | null>(null);
 
-  if (!show) return null;
-  const showId = typeof show.id === "string" ? show.id : (show as any)._id?.$oid;
-  const ratingColor = show.score && show.score >= 8.5 ? '#10b981' : show.score && show.score >= 7 ? '#f59e0b' : '#ef4444';
+  const showId = show?.id || show?._id?.$oid;
 
   useEffect(() => {
     if (showId) {
-      fetch(`${API_URL}/api/user/schedules_v2/show/${showId}`)
+      const schedulesUrl = new URL(`${API_URL}/api/user/schedules_v2/show/${showId}`);
+      if (city !== "All") {
+        schedulesUrl.searchParams.set("city", city);
+      }
+
+      fetch(schedulesUrl)
         .then(r => r.json())
         .then(data => {
           setSchedules(data);
@@ -35,7 +38,7 @@ export function ShowDetailModal({ show, onClose, css }: ShowDetailModalProps) {
         })
         .catch(console.error);
     }
-  }, [showId]);
+  }, [showId, city]);
 
   const availableDates = useMemo(() => {
     return Array.from(new Set(schedules.map(s => s.date))).sort();
@@ -50,6 +53,9 @@ export function ShowDetailModal({ show, onClose, css }: ShowDetailModalProps) {
     if (!selectedDate || !selectedSlot) return null;
     return availableSlots.find(s => s.slot === selectedSlot) || null;
   }, [availableSlots, selectedDate, selectedSlot]);
+
+  if (!show) return null;
+  const ratingColor = show.score && show.score >= 8.5 ? '#10b981' : show.score && show.score >= 7 ? '#f59e0b' : '#ef4444';
 
   return (
     <AnimatePresence>

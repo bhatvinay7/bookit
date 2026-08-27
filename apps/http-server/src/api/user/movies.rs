@@ -23,16 +23,7 @@ pub async fn get_movies(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ShowQuery>,
 ) -> Result<Json<Vec<Show>>, AppError> {
-    let mut cache_key = match &query.show_type {
-        Some(st) => format!("{}:{}", keys::MOVIES_ALL, st),
-        None => keys::MOVIES_ALL.to_string(),
-    };
-
-    if let Some(c) = &query.city {
-        if c != "All" && !c.trim().is_empty() {
-            cache_key = format!("{}:city:{}", cache_key, c.trim());
-        }
-    }
+    let cache_key = keys::cache_movies_key(query.show_type.as_deref(), query.city.as_deref());
 
     // Cache hit
     if let Some(cached) = get_cached::<Vec<Show>>(&state, &cache_key) {
@@ -54,12 +45,6 @@ pub async fn get_movies(
         }
     }
 
-    if let Some(c) = &query.city {
-        if c != "All" && !c.trim().is_empty() {
-            filter.insert("city", c.trim());
-        }
-    }
-
     use bookit_db::schema::schedules;
     use diesel::prelude::*;
 
@@ -69,10 +54,22 @@ pub async fn get_movies(
         .map_err(|e| AppError::internal(e.to_string()))?;
 
     // Fetch distinct mongo_show_ids that have an active schedule
-    let active_show_ids: Vec<String> = schedules::table
+    let mut active_schedules = schedules::table
         .select(schedules::mongo_show_id)
         .filter(schedules::start_time.gt(chrono::Utc::now()))
         .filter(schedules::deleted_at.is_null())
+        .into_boxed();
+
+    if let Some(city) = query
+        .city
+        .as_deref()
+        .map(str::trim)
+        .filter(|city| !city.is_empty() && !city.eq_ignore_ascii_case("All"))
+    {
+        active_schedules = active_schedules.filter(schedules::venue_city.eq(city));
+    }
+
+    let active_show_ids: Vec<String> = active_schedules
         .distinct()
         .load::<String>(&mut conn)
         .map_err(|e| AppError::internal(e.to_string()))?;
