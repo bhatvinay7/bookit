@@ -28,19 +28,43 @@ pub async fn establish_pool() -> Result<RedisPool, redis::RedisError> {
     let manager = RedisConnectionManager::new(connection_info)
         .expect("Failed to create Redis connection manager");
 
-    bb8::Pool::builder()
-        .max_size(30)
-        .connection_timeout(Duration::from_secs(
-            std::env::var("REDIS_CONNECTION_TIMEOUT_SECS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .unwrap_or(60),
-        ))
-        .idle_timeout(None)
-        .max_lifetime(None)
-        .test_on_check_out(true)
-        .build(manager)
-        .await
+    let attempts = env_u32("CONNECTION_RETRY_ATTEMPTS", 30);
+    let mut delay = Duration::from_millis(env_u64("CONNECTION_RETRY_INITIAL_MS", 500));
+    let max_delay = Duration::from_millis(env_u64("CONNECTION_RETRY_MAX_MS", 30_000));
+    let connection_timeout = Duration::from_secs(env_u64("REDIS_CONNECTION_TIMEOUT_SECS", 60));
+
+    for attempt in 1..=attempts {
+        match bb8::Pool::builder()
+            .max_size(30)
+            .idle_timeout(None)
+            .max_lifetime(None)
+            .connection_timeout(connection_timeout)
+            .test_on_check_out(true)
+            .build(manager.clone())
+            .await
+        {
+            Ok(pool) => return Ok(pool),
+            Err(error) if attempt < attempts => {
+                tracing::warn!(attempt, attempts, ?delay, %error, "Redis is unavailable; retrying");
+                tokio::time::sleep(delay).await;
+                delay = delay.saturating_mul(2).min(max_delay);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    unreachable!("connection retry attempts must be at least one")
+}
+
+fn env_u64(name: &str, default: u64) -> u64 {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+}
+
+fn env_u32(name: &str, default: u32) -> u32 {
+    env_u64(name, u64::from(default)).clamp(1, u64::from(u32::MAX)) as u32
 }
 
 pub async fn establish_seat_lock() -> Result<std::sync::Arc<dyn SeatLock>, redis::RedisError> {
