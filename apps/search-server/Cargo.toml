@@ -14,7 +14,7 @@ axum = { version = "0.7.5", features = ["ws", "multipart"] }
 tokio = { version = "1.37.0", features = ["full", "rt-multi-thread"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-tower-http = { version = "0.5.2", features = ["cors"] }
+tower-http = { version = "0.5.2", features = ["cors", "trace"] }
 reqwest = { version = "0.12", features = ["json"] }
 mongodb = { version = "3" }
 bson = { version = "2", features = ["chrono-0_4"] }
@@ -23,4 +23,5 @@ redis-conn = { path = "../../packages/redis-conn" }
 redis = { version = "1.4.1", features = ["tokio-native-tls-comp", "tokio-comp", "json"] }
 dotenvy = "0.15.7"
 futures = "0.3.32"
+tracing = "0.1"
 chrono = { version = "0.4", features = ["serde"] }

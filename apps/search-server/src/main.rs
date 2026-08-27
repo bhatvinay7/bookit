@@ -13,6 +13,7 @@ use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
+use tower_http::trace::TraceLayer;
 
 use crate::types::AppState;
 
@@ -61,7 +62,7 @@ async fn main() {
     let grpc_state = app_state.clone();
     let grpc_addr: SocketAddr = "0.0.0.0:50051".parse().unwrap();
     tokio::spawn(async move {
-        println!("Search gRPC Server listening on grpc://{}", grpc_addr);
+        tracing::info!(%grpc_addr, "Search gRPC server listening");
         tonic::transport::Server::builder()
             .add_service(SearchServiceServer::new(grpc::GrpcSearchService::new(
                 grpc_state,
@@ -75,10 +76,11 @@ async fn main() {
     let app = Router::new()
         .route("/health", get(|| async { "OK" }))
         .layer(cors)
+        .layer(TraceLayer::new_for_http())
         .with_state(app_state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8084));
-    println!("Search HTTP Health Server listening on http://{}", addr);
+    tracing::info!(%addr, "Search HTTP health server listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
 }

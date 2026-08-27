@@ -1,9 +1,10 @@
 use opentelemetry::{KeyValue, global};
-use opentelemetry_otlp::{ExportConfig, WithExportConfig};
+use opentelemetry_sdk::propagation::TraceContextPropagator;
+use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
     Resource,
     metrics::{MeterProviderBuilder, PeriodicReader},
-    trace::{Config, TracerProvider},
+    trace::Config,
 };
 use std::time::Duration;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
@@ -12,7 +13,23 @@ pub fn init_telemetry(service_name: &'static str) {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:4317".to_string());
 
-    let resource = Resource::new(vec![KeyValue::new("service.name", service_name)]);
+    // Kubernetes supplies BOOKIT_ENVIRONMENT through bookit-config. Local
+    // dotenv files use APP_MODE, while the web runtime convention is NODE_ENV.
+    let environment = std::env::var("BOOKIT_ENVIRONMENT")
+        .or_else(|_| std::env::var("APP_MODE"))
+        .or_else(|_| std::env::var("NODE_ENV"))
+        .unwrap_or_else(|_| "local".into());
+    // BOOKIT_REGION is set by each regional Kustomize overlay. A local process
+    // has no deployment region and should be labelled local rather than using
+    // DEPLOY_REGIONS, which may contain a comma-separated cluster list.
+    let region = std::env::var("BOOKIT_REGION").unwrap_or_else(|_| "local".into());
+    let resource = Resource::new(vec![
+        KeyValue::new("service.name", service_name),
+        KeyValue::new("deployment.environment", environment),
+        KeyValue::new("cloud.region", region),
+    ]);
+
+    global::set_text_map_propagator(TraceContextPropagator::new());
 
     // 1. Initialize OTLP Tracer (for traces)
     let tracer = opentelemetry_otlp::new_pipeline()
@@ -51,8 +68,13 @@ pub fn init_telemetry(service_name: &'static str) {
     // 3. Setup Tracing Subscriber to hook into standard Rust `tracing` macros
     let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
-    // Set up standard stdout formatting as well for local viewing
-    let fmt_layer = tracing_subscriber::fmt::layer().with_target(false);
+    // Emit one JSON object per line for the Kubernetes CRI log collector.
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .json()
+        .flatten_event(true)
+        .with_current_span(true)
+        .with_span_list(true)
+        .with_target(true);
 
     // Respect RUST_LOG environment variable for filtering log levels
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
