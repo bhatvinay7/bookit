@@ -353,6 +353,7 @@ jobs:
           DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
           DEPLOY_REGIONS: ${{ vars.DEPLOY_REGIONS }}
           KUBE_CONTEXTS: ${{ vars.KUBE_CONTEXTS }}
+          ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
           GHCR_USERNAME: ${{ github.repository_owner }}
           GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
@@ -398,6 +399,19 @@ jobs:
           REPLICATION_URL: ${{ secrets.REPLICATION_URL }}
           SLOT_NAME: ${{ secrets.SLOT_NAME }}
           PUBLICATION: ${{ secrets.PUBLICATION }}
+          CUSTOM_DB_MONGODB_ROOT_PASSWORD: ${{ secrets.CUSTOM_DB_MONGODB_ROOT_PASSWORD }}
+          CUSTOM_DB_MONGODB_REPLICA_SET_KEY: ${{ secrets.CUSTOM_DB_MONGODB_REPLICA_SET_KEY }}
+          CUSTOM_DB_MONGODB_EXPORTER_URI: ${{ secrets.CUSTOM_DB_MONGODB_EXPORTER_URI }}
+          CUSTOM_DB_POSTGRES_ADMIN_PASSWORD: ${{ secrets.CUSTOM_DB_POSTGRES_ADMIN_PASSWORD }}
+          CUSTOM_DB_POSTGRES_PASSWORD: ${{ secrets.CUSTOM_DB_POSTGRES_PASSWORD }}
+          CUSTOM_DB_POSTGRES_REPLICATION_PASSWORD: ${{ secrets.CUSTOM_DB_POSTGRES_REPLICATION_PASSWORD }}
+          CUSTOM_DB_REPMGR_PASSWORD: ${{ secrets.CUSTOM_DB_REPMGR_PASSWORD }}
+          CUSTOM_DB_POSTGRES_EXPORTER_DSN: ${{ secrets.CUSTOM_DB_POSTGRES_EXPORTER_DSN }}
+          CUSTOM_DB_PGPOOL_ADMIN_PASSWORD: ${{ secrets.CUSTOM_DB_PGPOOL_ADMIN_PASSWORD }}
+          CUSTOM_DB_RABBITMQ_ERLANG_COOKIE: ${{ secrets.CUSTOM_DB_RABBITMQ_ERLANG_COOKIE }}
+          CUSTOM_DB_RABBITMQ_USERNAME: ${{ secrets.CUSTOM_DB_RABBITMQ_USERNAME }}
+          CUSTOM_DB_RABBITMQ_PASSWORD: ${{ secrets.CUSTOM_DB_RABBITMQ_PASSWORD }}
+          CUSTOM_DB_REDIS_PASSWORD: ${{ secrets.CUSTOM_DB_REDIS_PASSWORD }}
         run: |
           wget -qO /tmp/kubeseal.tar.gz https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.26.2/kubeseal-0.26.2-linux-amd64.tar.gz
           tar -xzf /tmp/kubeseal.tar.gz -C /tmp kubeseal
@@ -407,6 +421,10 @@ jobs:
           IFS=',' read -ra contexts <<< "${KUBE_CONTEXTS}"
           if [ "${#regions[@]}" -eq 0 ] || [ "${#regions[@]}" -ne "${#contexts[@]}" ]; then
             echo "DEPLOY_REGIONS and KUBE_CONTEXTS must be non-empty comma-separated lists of equal length."
+            exit 1
+          fi
+          if [ "$ENABLE_MULTI_REGION" != "true" ] && [ "${#regions[@]}" -ne 1 ]; then
+            echo "ENABLE_MULTI_REGION=false requires exactly one DEPLOY_REGIONS/KUBE_CONTEXTS entry."
             exit 1
           fi
           helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets

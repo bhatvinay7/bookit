@@ -205,7 +205,7 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                             amount: amount_str.to_string(),
                             ticket_url: pdf_url,
                             support_email: env::var("SUPPORT_EMAIL")
-                                .unwrap_or_else(|_| "support@bookit.example".into()),
+                                .unwrap_or_else(|_| "support@bookit4u.shop".into()),
                         };
                         if let Err(error) =
                             send_booking_confirmation(&user_email, &email_data).await
@@ -241,7 +241,7 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                             seats,
                             refund_amount: amount_str.to_string(),
                             support_email: env::var("SUPPORT_EMAIL")
-                                .unwrap_or_else(|_| "support@bookit.example".into()),
+                                .unwrap_or_else(|_| "support@bookit4u.shop".into()),
                         };
                         if let Err(error) =
                             send_cancellation_confirmation(&user_email, &email_data).await

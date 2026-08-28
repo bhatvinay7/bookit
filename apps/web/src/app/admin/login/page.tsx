@@ -149,7 +149,7 @@ export default function AdminLogin() {
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500"><Mail className="w-5 h-5" /></div>
                       <input type="email" className="w-full pl-11 pr-4 py-3 bg-slate-800/50 border border-slate-700 rounded-xl focus:bg-slate-800 focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 outline-none transition-all font-medium text-white placeholder-slate-500"
-                        value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@bookit.com" required />
+                        value={email} onChange={(e) => setEmail(e.target.value)} placeholder="admin@bookit4u.shop" required />
                     </div>
                   </div>
                   <div>
@@ -214,7 +214,7 @@ export default function AdminLogin() {
                     <div className="relative">
                       <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-slate-500"><Mail className="w-5 h-5" /></div>
                       <input type="email" className="w-full pl-11 pr-4 py-3 bg-slate-800/50 border border-slate-700 rounded-xl focus:bg-slate-800 focus:ring-2 focus:ring-amber-500/50 focus:border-amber-500 outline-none transition-all font-medium text-white placeholder-slate-500"
-                        value={resetEmail} onChange={(e) => setResetEmail(e.target.value)} placeholder="admin@bookit.com" required />
+                        value={resetEmail} onChange={(e) => setResetEmail(e.target.value)} placeholder="admin@bookit4u.shop" required />
                     </div>
                   </div>
                   <button type="submit" disabled={resetLoading}
