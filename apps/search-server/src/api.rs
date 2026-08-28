@@ -1,8 +1,8 @@
 use axum::{
-    extract::{Query, State},
     Json,
+    extract::{Query, State},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::sync::Arc;
 
 use crate::types::{AppState, SearchQuery};
@@ -53,40 +53,64 @@ pub async fn search_handler(
         .send()
         .await;
 
-    if let Ok(response) = res {
-        if let Ok(body) = response.json::<Value>().await {
-            let mut shows = Vec::new();
-            if let Some(hits) = body
-                .get("hits")
-                .and_then(|h| h.get("hits"))
-                .and_then(|h| h.as_array())
-            {
-                for hit in hits {
-                    if let Some(source) = hit.get("_source") {
-                        let id = hit.get("_id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                        let title = source.get("title").and_then(|v| v.as_str()).unwrap_or_default().to_string();
-                        let poster_url = source.get("poster_url").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let thumbnail_url = source.get("thumbnail_url").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let venue = source.get("venue").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let city = source.get("city").and_then(|v| v.as_str()).map(|s| s.to_string());
-                        let show_type = source.get("show_type").and_then(|v| v.as_str()).unwrap_or("Event").to_string();
-                        let tags = source.get("tags").cloned().unwrap_or(json!([]));
-                        
-                        shows.push(json!({
-                            "id": id,
-                            "title": title,
-                            "poster_url": poster_url,
-                            "thumbnail_url": thumbnail_url,
-                            "venue": venue,
-                            "city": city,
-                            "show_type": show_type,
-                            "tags": tags
-                        }));
-                    }
+    if let Ok(response) = res
+        && let Ok(body) = response.json::<Value>().await
+    {
+        let mut shows = Vec::new();
+        if let Some(hits) = body
+            .get("hits")
+            .and_then(|h| h.get("hits"))
+            .and_then(|h| h.as_array())
+        {
+            for hit in hits {
+                if let Some(source) = hit.get("_source") {
+                    let id = hit
+                        .get("_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let title = source
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let poster_url = source
+                        .get("poster_url")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let thumbnail_url = source
+                        .get("thumbnail_url")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let venue = source
+                        .get("venue")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let city = source
+                        .get("city")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let show_type = source
+                        .get("show_type")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Event")
+                        .to_string();
+                    let tags = source.get("tags").cloned().unwrap_or(json!([]));
+
+                    shows.push(json!({
+                        "id": id,
+                        "title": title,
+                        "poster_url": poster_url,
+                        "thumbnail_url": thumbnail_url,
+                        "venue": venue,
+                        "city": city,
+                        "show_type": show_type,
+                        "tags": tags
+                    }));
                 }
             }
-            return Json(json!(shows));
         }
+        return Json(json!(shows));
     }
 
     Json(json!([]))

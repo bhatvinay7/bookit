@@ -78,11 +78,11 @@ pub async fn watch_redis_stream(
                                 }
 
                                 // Save resume token
-                                if let Ok(token_json) = mongodb::bson::to_document(&event.id) {
-                                    if let Ok(token_str) = serde_json::to_string(&token_json) {
-                                        let _: Result<(), _> =
-                                            redis_cli.set(resume_token_key, token_str).await;
-                                    }
+                                if let Ok(token_json) = mongodb::bson::to_document(&event.id)
+                                    && let Ok(token_str) = serde_json::to_string(&token_json)
+                                {
+                                    let _: Result<(), _> =
+                                        redis_cli.set(resume_token_key, token_str).await;
                                 }
                             }
                         }

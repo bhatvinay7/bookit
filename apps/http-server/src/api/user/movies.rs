@@ -39,10 +39,10 @@ pub async fn get_movies(
         "deleted_at": null
     };
 
-    if let Some(st) = &query.show_type {
-        if st != "All" {
-            filter.insert("show_type", st);
-        }
+    if let Some(st) = &query.show_type
+        && st != "All"
+    {
+        filter.insert("show_type", st);
     }
 
     use bookit_db::schema::schedules;
@@ -99,7 +99,7 @@ pub async fn get_movies(
     }
 
     // Sort by created_at desc
-    movies.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    movies.sort_by_key(|movie| std::cmp::Reverse(movie.created_at));
 
     let _ = set_cached(&state, &cache_key, &movies, keys::TTL_MOVIES_ALL);
     Ok(Json(movies))

@@ -82,7 +82,7 @@ pub async fn list_shows(State(state): State<Arc<AppState>>) -> Result<impl IntoR
     }
 
     // Sort by created_at desc
-    shows.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    shows.sort_by_key(|show| std::cmp::Reverse(show.created_at));
 
     set_async_cached(&state, CACHE_SHOWS, &shows, TTL_SHOWS).await;
 
@@ -112,21 +112,23 @@ pub async fn list_shows_grid(
     let limit = q.limit.unwrap_or(30);
 
     let mut cache_key = CACHE_DASHBOARD_GRID.to_string();
-    if let Some(c) = &q.city {
-        if c != "All" && !c.trim().is_empty() {
-            cache_key = format!("{}:city:{}", cache_key, c.trim());
-        }
+    if let Some(c) = &q.city
+        && c != "All"
+        && !c.trim().is_empty()
+    {
+        cache_key = format!("{}:city:{}", cache_key, c.trim());
     }
 
     // Initial load cache check
-    if page == 1 && limit == 30 {
-        if let Some(cached) = get_async_cached::<Vec<Show>>(&state, &cache_key).await {
-            let res = GridResponse {
-                shows: cached,
-                has_more: true,
-            };
-            return Ok((StatusCode::OK, Json(res)));
-        }
+    if page == 1
+        && limit == 30
+        && let Some(cached) = get_async_cached::<Vec<Show>>(&state, &cache_key).await
+    {
+        let res = GridResponse {
+            shows: cached,
+            has_more: true,
+        };
+        return Ok((StatusCode::OK, Json(res)));
     }
 
     let shows_collection = state
@@ -143,10 +145,11 @@ pub async fn list_shows_grid(
         .build();
 
     let mut filter = bson::doc! { "deleted_at": null };
-    if let Some(c) = &q.city {
-        if c != "All" && !c.trim().is_empty() {
-            filter.insert("city", c.trim());
-        }
+    if let Some(c) = &q.city
+        && c != "All"
+        && !c.trim().is_empty()
+    {
+        filter.insert("city", c.trim());
     }
 
     let mut cursor = shows_collection

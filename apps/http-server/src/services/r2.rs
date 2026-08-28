@@ -32,40 +32,39 @@ pub async fn upload_from_multipart(mut multipart: Multipart) -> Result<UploadRes
     let pub_url = std::env::var("CLOUDFLARE_R2_PUBLIC_URL").unwrap_or_default();
     let client = build_client();
 
-    while let Some(field) = multipart
+    let Some(field) = multipart
         .next_field()
         .await
         .map_err(|e| AppError::BadRequest(e.to_string()))?
-    {
-        let file_name = field.file_name().unwrap_or("upload").to_string();
-        let content_type = field
-            .content_type()
-            .unwrap_or("application/octet-stream")
-            .to_string();
-        let data = field
-            .bytes()
-            .await
-            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    else {
+        return Err(AppError::BadRequest(
+            "No file provided in multipart form".into(),
+        ));
+    };
+    let file_name = field.file_name().unwrap_or("upload").to_string();
+    let content_type = field
+        .content_type()
+        .unwrap_or("application/octet-stream")
+        .to_string();
+    let data = field
+        .bytes()
+        .await
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
 
-        let key = format!("{}-{}", Utc::now().timestamp_millis(), file_name);
+    let key = format!("{}-{}", Utc::now().timestamp_millis(), file_name);
 
-        client
-            .put_object()
-            .bucket(&bucket)
-            .key(&key)
-            .content_type(&content_type)
-            .body(ByteStream::from(data))
-            .send()
-            .await
-            .map_err(|e| AppError::Internal(anyhow::anyhow!("R2 upload failed: {}", e)))?;
+    client
+        .put_object()
+        .bucket(&bucket)
+        .key(&key)
+        .content_type(&content_type)
+        .body(ByteStream::from(data))
+        .send()
+        .await
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("R2 upload failed: {}", e)))?;
 
-        let url = format!("{}/{}", pub_url.trim_end_matches('/'), key);
-        return Ok(UploadResult { url, key });
-    }
-
-    Err(AppError::BadRequest(
-        "No file provided in multipart form".into(),
-    ))
+    let url = format!("{}/{}", pub_url.trim_end_matches('/'), key);
+    Ok(UploadResult { url, key })
 }
 
 /// Upload PDF bytes directly to Cloudflare R2.

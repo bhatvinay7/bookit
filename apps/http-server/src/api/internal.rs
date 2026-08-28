@@ -31,7 +31,7 @@ fn create_pdf_bytes(req: &GeneratePdfRequest) -> Result<Vec<u8>, AppError> {
     use printpdf::*;
 
     let (doc, page1, layer1) = PdfDocument::new(
-        &format!("Ticket-{}", req.order_id),
+        format!("Ticket-{}", req.order_id),
         Mm(210.0),
         Mm(297.0),
         "Layer 1",

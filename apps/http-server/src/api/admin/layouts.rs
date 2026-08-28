@@ -197,7 +197,7 @@ pub async fn add_seats_to_layout(
     let new_seats: Vec<NewSeatLayoutSeat> = unique_seats
         .into_values()
         .map(|s| NewSeatLayoutSeat {
-            layout_id: layout_id,
+            layout_id,
             row_letter: s.row_letter.clone(),
             seat_number: s.seat_number,
             seat_class: s.seat_class.clone(),
@@ -290,7 +290,7 @@ pub async fn update_layout(
             let new_seats: Vec<NewSeatLayoutSeat> = unique_seats
                 .into_values()
                 .map(|s| NewSeatLayoutSeat {
-                    layout_id: layout_id,
+                    layout_id,
                     row_letter: s.row_letter.clone(),
                     seat_number: s.seat_number,
                     seat_class: s.seat_class.clone(),

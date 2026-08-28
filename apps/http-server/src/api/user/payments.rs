@@ -51,27 +51,27 @@ pub async fn request_payment(
         ));
     }
 
-    if let Some(order_id) = &request.razorpay_order_id {
-        if !order_id.starts_with("order_mock_") {
-            let payment_id = request
-                .razorpay_payment_id
-                .as_deref()
-                .ok_or_else(|| AppError::bad_request("Missing Razorpay payment ID"))?;
-            let signature = request
-                .razorpay_signature
-                .as_deref()
-                .ok_or_else(|| AppError::bad_request("Missing Razorpay signature"))?;
+    if let Some(order_id) = &request.razorpay_order_id
+        && !order_id.starts_with("order_mock_")
+    {
+        let payment_id = request
+            .razorpay_payment_id
+            .as_deref()
+            .ok_or_else(|| AppError::bad_request("Missing Razorpay payment ID"))?;
+        let signature = request
+            .razorpay_signature
+            .as_deref()
+            .ok_or_else(|| AppError::bad_request("Missing Razorpay signature"))?;
 
-            let secret = std::env::var("RAZORPAY_KEY_SECRET").unwrap_or_default();
-            let payload = format!("{}|{}", order_id, payment_id);
-            let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
-                .map_err(|_| AppError::internal("Invalid HMAC key"))?;
-            mac.update(payload.as_bytes());
-            let expected_signature = hex::encode(mac.finalize().into_bytes());
+        let secret = std::env::var("RAZORPAY_KEY_SECRET").unwrap_or_default();
+        let payload = format!("{}|{}", order_id, payment_id);
+        let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+            .map_err(|_| AppError::internal("Invalid HMAC key"))?;
+        mac.update(payload.as_bytes());
+        let expected_signature = hex::encode(mac.finalize().into_bytes());
 
-            if expected_signature != signature {
-                return Err(AppError::bad_request("Invalid Razorpay signature"));
-            }
+        if expected_signature != signature {
+            return Err(AppError::bad_request("Invalid Razorpay signature"));
         }
     }
 
@@ -400,7 +400,7 @@ pub async fn get_checkout_summary(
     let mut sub_total = bigdecimal::BigDecimal::from(0);
     let mut seat_summaries = Vec::new();
     for s in &seats {
-        sub_total = sub_total + s.price.clone();
+        sub_total += s.price.clone();
         seat_summaries.push(SeatSummary {
             seat_id: s.id,
             row_letter: s.row_letter.clone(),

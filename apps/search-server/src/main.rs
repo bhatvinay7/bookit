@@ -1,3 +1,4 @@
+mod api;
 mod es;
 mod grpc;
 mod stream;
@@ -42,8 +43,6 @@ async fn main() {
     let app_state = Arc::new(AppState {
         es_client: es_client.clone(),
         es_url: es_url.clone(),
-        mongo_client: mongo_client.clone(),
-        db_name: db_name.clone(),
         db_pool,
     });
 
@@ -79,6 +78,7 @@ async fn main() {
     let cors = CorsLayer::permissive();
     let app = Router::new()
         .route("/health", get(|| async { "OK" }))
+        .route("/search", get(api::search_handler))
         .layer(cors)
         .layer(TraceLayer::new_for_http())
         .with_state(app_state);

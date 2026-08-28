@@ -56,12 +56,10 @@ pub async fn list_distinct_cities(
 
     match pg_cities {
         Ok(cities) => {
-            for city_opt in cities {
-                if let Some(city) = city_opt {
-                    let city_trimmed = city.trim();
-                    if !city_trimmed.is_empty() {
-                        city_set.insert(city_trimmed.to_lowercase());
-                    }
+            for city in cities.into_iter().flatten() {
+                let city_trimmed = city.trim();
+                if !city_trimmed.is_empty() {
+                    city_set.insert(city_trimmed.to_lowercase());
                 }
             }
         }

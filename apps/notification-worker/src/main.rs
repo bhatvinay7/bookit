@@ -3,7 +3,6 @@ mod db;
 mod email;
 
 use bookit_db::db::create_db_pool;
-use dotenvy::dotenv;
 use lapin::{
     ExchangeKind,
     options::{BasicConsumeOptions, ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions},

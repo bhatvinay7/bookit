@@ -2,7 +2,6 @@ mod consumer;
 mod payment;
 
 use bookit_db::db::create_db_pool;
-use dotenvy::dotenv;
 use lapin::types::AMQPValue;
 use lapin::{
     ExchangeKind,
