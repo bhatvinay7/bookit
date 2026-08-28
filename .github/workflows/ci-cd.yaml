@@ -43,24 +43,19 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9.0.0
-
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: "pnpm"
+          cache: "npm"
 
       - name: Install Node.js dependencies
-        run: pnpm install --frozen-lockfile
+        run: npm ci
 
       - name: Lint and Type Check TypeScript
         run: |
-          pnpm turbo run lint
-          pnpm turbo run check-types
+          npx turbo run lint
+          npx turbo run check-types
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
