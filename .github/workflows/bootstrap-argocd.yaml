@@ -60,6 +60,7 @@ jobs:
       - name: Configure kubectl
         env:
           KUBE_DATA: ${{ secrets.KUBECONFIG }}
+          KUBE_DATA_SECONDARY: ${{ secrets.KUBE_CONFIG_SECONDARY }}
         run: |
           if [ -z "$KUBE_DATA" ]; then
             echo "Error: KUBECONFIG secret is not set!"
@@ -75,6 +76,15 @@ jobs:
             printf "%s" "$KUBE_DATA" | base64 -d > ~/.kube/config
           fi
           chmod 600 ~/.kube/config
+
+          if [ "${{ vars.ENABLE_MULTI_REGION }}" = "true" ] && [ -n "$KUBE_DATA_SECONDARY" ]; then
+            if printf "%s" "$KUBE_DATA_SECONDARY" | grep -q "apiVersion:"; then
+              printf "%s" "$KUBE_DATA_SECONDARY" > ~/.kube/config-secondary
+            else
+              printf "%s" "$KUBE_DATA_SECONDARY" | base64 -d > ~/.kube/config-secondary
+            fi
+            chmod 600 ~/.kube/config-secondary
+          fi
 
       - name: Verify target kubeconfig context
         env:
@@ -155,18 +165,51 @@ jobs:
           echo "Installing the Sealed Secrets controller application..."
           kubectl apply -f argocd/argocd-sealed-secrets.yaml
 
+          echo "Waiting for Sealed Secrets Controller and Registering Region Configs..."
+          # Install kubeseal CLI
+          wget -q https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.1/kubeseal-0.27.1-linux-amd64.tar.gz
+          tar -xzf kubeseal-0.27.1-linux-amd64.tar.gz kubeseal
+          sudo install -m 755 kubeseal /usr/local/bin/kubeseal
+
+          # Wait for the controller pods to be healthy
+          kubectl wait --for=condition=Available deployment -l app.kubernetes.io/name=sealed-secrets -n kube-system --timeout=15m
+
+          # Create and apply the SealedSecret for region configuration from GitHub Secrets
+          kubectl create secret generic stateful-region-config -n argocd \
+            --from-literal=primary_region="${{ secrets.PRIMARY_REGION }}" \
+            --from-literal=secondary_region="${{ secrets.SECONDARY_REGION }}" \
+            --from-literal=multi_region_enabled="${{ vars.ENABLE_MULTI_REGION }}" \
+            --from-literal=use_cloud_provider="${{ secrets.USE_CLOUD_PROVIDER }}" \
+            --dry-run=client -o yaml | \
+          kubeseal --controller-name sealed-secrets --controller-namespace kube-system --format yaml > sealed-region-config.yaml
+          kubectl apply -f sealed-region-config.yaml
+
+          if [ "$ENABLE_MULTI_REGION" = "true" ]; then
+            echo "Registering Secondary Region in ArgoCD..."
+            curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+            sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
+            argocd login --core
+            
+            SECONDARY_CONTEXT=$(kubectl config current-context --kubeconfig="$HOME/.kube/config-secondary")
+            
+            argocd cluster add "$SECONDARY_CONTEXT" \
+              --kubeconfig "$HOME/.kube/config-secondary" \
+              --label deploy-stateful-services=true \
+              --label environment=${{ inputs.target_environment }} \
+              --label region=${{ secrets.SECONDARY_REGION }} \
+              --label multi_region_enabled=true \
+              --label primary_region=${{ secrets.PRIMARY_REGION }} \
+              --label secondary_region=${{ secrets.SECONDARY_REGION }} \
+              --label use_cloud_provider=${{ secrets.USE_CLOUD_PROVIDER }} \
+              --yes
+          fi
+
           if [ "${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}" = "production" ]; then
             echo "Bootstrapping production applications from main."
-            if [ "$ENABLE_MULTI_REGION" = "true" ]; then
-              kubectl apply -f argocd/prod-apps-multi-region.yaml
-            else
-              kubectl apply -f argocd/prod-apps.yaml
-            fi
+            kubectl apply -f argocd/prod-apps.yaml
+            kubectl apply -f argocd/stateful-applicationset.yaml
           else
             echo "Bootstrapping development applications from dev."
-            if [ "$ENABLE_MULTI_REGION" = "true" ]; then
-              kubectl apply -f argocd/dev-apps-multi-region.yaml
-            else
-              kubectl apply -f argocd/dev-apps.yaml
-            fi
+            kubectl apply -f argocd/dev-apps.yaml
+            kubectl apply -f argocd/stateful-applicationset.yaml
           fi
