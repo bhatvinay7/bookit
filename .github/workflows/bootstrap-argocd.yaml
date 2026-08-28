@@ -237,15 +237,14 @@ jobs:
           echo "Labeling Primary Region in ArgoCD for StatefulServices..."
           curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
           sudo install -m 555 argocd-linux-amd64 /usr/local/bin/argocd
-          argocd login --core --namespace argocd
-          
           # The local cluster doesn't always have a secret out of the box until it's explicitly added or modified.
           # We add it (or update it if it exists) to ensure we can attach our custom labels.
           PRIMARY_CONTEXT=$(kubectl config current-context)
-          argocd cluster add "$PRIMARY_CONTEXT" --in-cluster --yes --namespace argocd || true
+          kubectl config set-context "$PRIMARY_CONTEXT" --namespace=argocd
+          argocd login --core
+          argocd cluster add "$PRIMARY_CONTEXT" --in-cluster --yes || true
           
           argocd cluster set https://kubernetes.default.svc \
-            --namespace argocd \
             --label deploy-stateful-services=true \
             --label environment=${{ inputs.target_environment }} \
             --label region=${{ secrets.PRIMARY_REGION }} \
@@ -261,7 +260,6 @@ jobs:
             
             argocd cluster add "$SECONDARY_CONTEXT" \
               --kubeconfig "$HOME/.kube/config-secondary" \
-              --namespace argocd \
               --label deploy-stateful-services=true \
               --label environment=${{ inputs.target_environment }} \
               --label region=${{ secrets.SECONDARY_REGION }} \
