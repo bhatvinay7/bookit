@@ -26,12 +26,9 @@ use crate::helpers::errors::AppError;
 use crate::services::cache::{get_async_cached, set_async_cached};
 
 fn bitmap_seat_status(bitmap: &[u8], seat_id: i32) -> Option<&'static str> {
-    let Some(bit_offset) = usize::try_from(seat_id)
+    let bit_offset = usize::try_from(seat_id)
         .ok()
-        .and_then(|id| id.checked_mul(2))
-    else {
-        return None;
-    };
+        .and_then(|id| id.checked_mul(2))?;
     let byte = bitmap.get(bit_offset / 8).copied()?;
     let state = (byte >> (6 - (bit_offset % 8))) & 0b11;
 
@@ -125,15 +122,14 @@ pub async fn list_active_schedules(
         let mut show_val: Option<Value> = get_async_cached::<Value>(&state, &show_cache_key).await;
 
         // If show miss, fetch from Mongo
-        if show_val.is_none() {
-            if let Ok(oid) = bson::oid::ObjectId::parse_str(&s.mongo_show_id) {
-                if let Ok(Some(show_doc)) = coll.find_one(doc! { "_id": oid }).await {
-                    let v = serde_json::to_value(&show_doc).unwrap_or(Value::Null);
-                    show_val = Some(v.clone());
-                    // Set cache
-                    set_async_cached(&state, &show_cache_key, &v, 3600).await;
-                }
-            }
+        if show_val.is_none()
+            && let Ok(oid) = bson::oid::ObjectId::parse_str(&s.mongo_show_id)
+            && let Ok(Some(show_doc)) = coll.find_one(doc! { "_id": oid }).await
+        {
+            let v = serde_json::to_value(&show_doc).unwrap_or(Value::Null);
+            show_val = Some(v.clone());
+            // Set cache
+            set_async_cached(&state, &show_cache_key, &v, 3600).await;
         }
 
         let seconds_until_booking_open = (s.booking_open_at - Utc::now()).num_seconds();
@@ -209,10 +205,10 @@ pub async fn get_schedule_details(
         .collection::<Show>("shows");
     let mut show_val = Value::Null;
 
-    if let Ok(oid) = bson::oid::ObjectId::parse_str(&schedule.mongo_show_id) {
-        if let Ok(Some(show_doc)) = coll.find_one(doc! { "_id": oid }).await {
-            show_val = serde_json::to_value(&show_doc).unwrap_or(Value::Null);
-        }
+    if let Ok(oid) = bson::oid::ObjectId::parse_str(&schedule.mongo_show_id)
+        && let Ok(Some(show_doc)) = coll.find_one(doc! { "_id": oid }).await
+    {
+        show_val = serde_json::to_value(&show_doc).unwrap_or(Value::Null);
     }
 
     let seconds_until_booking_open = (schedule.booking_open_at - Utc::now()).num_seconds();
@@ -281,14 +277,14 @@ pub async fn get_schedule_seats(
             .unwrap_or(database_status);
         let mut locked_by_user_id: Option<i32> = None;
 
-        if status_str == "Locked" {
-            if let Some(ref mut rconn) = redis_conn {
-                locked_by_user_id = redis::cmd("GET")
-                    .arg(bookit_redis::keys::seat_lock_key(id, seat.id))
-                    .query(rconn)
-                    .ok()
-                    .flatten();
-            }
+        if status_str == "Locked"
+            && let Some(ref mut rconn) = redis_conn
+        {
+            locked_by_user_id = redis::cmd("GET")
+                .arg(bookit_redis::keys::seat_lock_key(id, seat.id))
+                .query(rconn)
+                .ok()
+                .flatten();
         }
 
         seats_json.push(serde_json::json!({

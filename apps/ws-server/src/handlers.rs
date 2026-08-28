@@ -1,6 +1,6 @@
 use axum::extract::ws::{Message, WebSocket};
 use futures::{sink::SinkExt, stream::StreamExt};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 
 use crate::AppState;
@@ -30,13 +30,6 @@ pub enum WsRequest {
         #[serde(alias = "showtime_id")]
         room_id: i32,
     },
-}
-
-#[derive(Serialize)]
-pub struct WsEvent {
-    pub event: String,
-    pub seat_id: i32,
-    pub user_id: i32,
 }
 
 pub async fn handle_socket(

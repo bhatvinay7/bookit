@@ -38,10 +38,13 @@ struct LockTask {
     delivery: Delivery,
 }
 
+type SeatStateMap = Arc<DashMap<i32, Arc<CachePaddedSeatState>>>;
+type ShowSeatMaps = Arc<DashMap<i32, SeatStateMap>>;
+
 #[derive(Clone)]
 struct LockServerActors {
     actors: Arc<DashMap<i32, Arc<CachePaddedActor>>>,
-    seats: Arc<DashMap<i32, Arc<DashMap<i32, Arc<CachePaddedSeatState>>>>>,
+    seats: ShowSeatMaps,
     redis_pool: RedisPool,
     seat_lock: Arc<dyn SeatLock>,
     permits: Arc<Semaphore>,

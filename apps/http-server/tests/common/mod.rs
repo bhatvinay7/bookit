@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 /// Test database URL — use a dedicated test DB or the main DB with cleanup.
 /// Set TEST_DATABASE_URL env var to override.
+#[allow(dead_code)] // Shared only by the integration-test crates that need database access.
 pub fn test_db_url() -> String {
     dotenv().ok();
     std::env::var("TEST_DATABASE_URL")
@@ -21,6 +22,14 @@ pub async fn create_test_app() -> Router {
     let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| "supersecretjwtkey".into());
     let redis_url = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
     let redis_client = redis::Client::open(redis_url).expect("Invalid Redis URL");
+    let redis_manager = redis::aio::ConnectionManager::new(redis_client.clone())
+        .await
+        .expect("Failed to initialize Redis ConnectionManager");
+    let single_node_lock = Arc::new(
+        bookit_redis::SingleNodeLock::establish()
+            .await
+            .expect("Failed to establish SingleNodeLock cluster"),
+    );
 
     let mongo_url = std::env::var("MONGODB_URL").expect("MONGODB_URL must be set");
     let mongo_db_name = std::env::var("MONGODB_DB").unwrap_or_else(|_| "bookit_test".into());
@@ -34,8 +43,11 @@ pub async fn create_test_app() -> Router {
         db_pool,
         jwt_secret,
         redis_client,
+        redis_manager,
+        single_node_lock,
         mongo_client,
         mongo_db_name,
+        rmq_channel: None,
     });
 
     Router::new()
@@ -47,6 +59,7 @@ pub async fn create_test_app() -> Router {
 
 /// Return a valid admin JWT for test requests.
 /// Uses the test JWT_SECRET.
+#[allow(dead_code)] // Shared only by the integration-test crates that need admin authentication.
 pub fn admin_jwt() -> String {
     use jsonwebtoken::{EncodingKey, Header, encode};
     use serde::{Deserialize, Serialize};

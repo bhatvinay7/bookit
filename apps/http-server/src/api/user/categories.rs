@@ -48,7 +48,7 @@ pub async fn list_categories(
             },
         )
         .await
-        .map_err(|e| AppError::internal(&format!("DB Error: {}", e)))?
+        .map_err(|e| AppError::internal(format!("DB Error: {}", e)))?
         .into_iter()
         .filter_map(|value| match value {
             Bson::String(id) => ObjectId::parse_str(id).ok(),
@@ -69,7 +69,7 @@ pub async fn list_categories(
         .find(doc! { "_id": { "$in": category_ids } })
         .sort(sort)
         .await
-        .map_err(|e| AppError::internal(&format!("DB Error: {}", e)))?;
+        .map_err(|e| AppError::internal(format!("DB Error: {}", e)))?;
 
     let mut categories = Vec::new();
     while let Some(doc) = cursor.next().await {

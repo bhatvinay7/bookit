@@ -42,16 +42,12 @@ pub async fn watch_redis_stream(state: Arc<AppState>) {
             Ok(reply) => {
                 for key in reply.keys {
                     for id in key.ids {
-                        if let Some(payload_str) = id.map.get("payload") {
-                            if let Ok(json_str) =
+                        if let Some(payload_str) = id.map.get("payload")
+                            && let Ok(json_str) =
                                 redis::from_redis_value::<String>(payload_str.clone())
-                            {
-                                if let Ok(event) =
-                                    serde_json::from_str::<serde_json::Value>(&json_str)
-                                {
-                                    process_cdc_event(&state, &event).await;
-                                }
-                            }
+                            && let Ok(event) = serde_json::from_str::<serde_json::Value>(&json_str)
+                        {
+                            process_cdc_event(&state, &event).await;
                         }
                         // ACK the message
                         let _: () = conn.xack(stream_key, group_name, &[&id.id]).await.unwrap();

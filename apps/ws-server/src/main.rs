@@ -30,6 +30,7 @@ struct WsQuery {
 }
 
 #[derive(Deserialize)]
+#[allow(dead_code)] // `role` and `exp` are validated JWT claims retained for schema compatibility.
 struct Claims {
     pub sub: String,
     pub role: String,

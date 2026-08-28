@@ -2,7 +2,7 @@ use crate::RedisPool;
 use bb8_redis::{RedisConnectionManager, bb8};
 use futures::future::join_all;
 use redis::AsyncCommands;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 #[derive(Clone)]
 pub struct SingleNodeLock {
@@ -26,10 +26,10 @@ impl SingleNodeLock {
         } else {
             let default_url_1 = std::env::var("REDIS_URL").expect("REDIS_URL must be set");
             urls.push(default_url_1);
-            if let Ok(default_url_2) = std::env::var("REDIS_REMOTE_URL") {
-                if !urls.contains(&default_url_2) {
-                    urls.push(default_url_2);
-                }
+            if let Ok(default_url_2) = std::env::var("REDIS_REMOTE_URL")
+                && !urls.contains(&default_url_2)
+            {
+                urls.push(default_url_2);
             }
         }
 
@@ -192,7 +192,6 @@ impl SeatLock for SingleNodeLock {
         user_id: i32,
         expires_in_sec: i32,
     ) -> bool {
-        let ttl_ms = (expires_in_sec * 1000) as u64;
         let now = chrono::Utc::now().timestamp();
         let expiry = now + expires_in_sec as i64;
         let processing_expiry = expiry + 15;
@@ -596,9 +595,7 @@ impl SeatLock for SingleNodeLock {
 
     /// Gets the owner user_id of a lock by querying the CRC16 target node.
     async fn get_lock_owner(&self, showtime_id: i32, seat_id: i32) -> Option<i32> {
-        let Some(pool) = self.pool_for_seat(showtime_id, seat_id) else {
-            return None;
-        };
+        let pool = self.pool_for_seat(showtime_id, seat_id)?;
         let lock_key = crate::keys::seat_lock_key(showtime_id, seat_id);
 
         if let Ok(mut cli) = pool.get().await {
@@ -615,14 +612,14 @@ impl SeatLock for SingleNodeLock {
 
     /// Reads the schedule seat bitmap from the primary pool.
     async fn get_schedule_seat_bitmap_state_cluster(&self, bitmap_key: &str) -> Vec<u8> {
-        if let Some(pool) = self.pools.first() {
-            if let Ok(mut cli) = pool.get().await {
-                let result: redis::RedisResult<Vec<u8>> = redis::cmd("GET")
-                    .arg(bitmap_key)
-                    .query_async(&mut *cli)
-                    .await;
-                return result.unwrap_or_default();
-            }
+        if let Some(pool) = self.pools.first()
+            && let Ok(mut cli) = pool.get().await
+        {
+            let result: redis::RedisResult<Vec<u8>> = redis::cmd("GET")
+                .arg(bitmap_key)
+                .query_async(&mut *cli)
+                .await;
+            return result.unwrap_or_default();
         }
         Vec::new()
     }

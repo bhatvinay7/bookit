@@ -15,19 +15,14 @@ pub enum ShowType {
 
 // ─── Enum: ShowStatus ─────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub enum ShowStatus {
+    #[default]
     ComingSoon,
     NowShowing,
     Ended,
     Cancelled,
-}
-
-impl Default for ShowStatus {
-    fn default() -> Self {
-        ShowStatus::ComingSoon
-    }
 }
 
 impl ShowStatus {

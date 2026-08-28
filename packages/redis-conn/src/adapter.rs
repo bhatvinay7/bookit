@@ -3,7 +3,6 @@ use futures::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedSender;
-use tracing::error;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "event")]
@@ -73,7 +72,7 @@ impl RedisSocketAdapter {
         self.sockets.insert(socket_id.clone(), tx);
         self.user_sockets
             .entry(user_id)
-            .or_insert_with(DashSet::new)
+            .or_default()
             .insert(socket_id.clone());
         self.socket_shows.insert(socket_id, DashSet::new());
     }
@@ -97,7 +96,7 @@ impl RedisSocketAdapter {
     pub fn subscribe_local(&self, socket_id: &str, showtime_id: i32) {
         self.show_sockets
             .entry(showtime_id)
-            .or_insert_with(DashSet::new)
+            .or_default()
             .insert(socket_id.to_string());
 
         if let Some(shows) = self.socket_shows.get(socket_id) {
@@ -239,32 +238,30 @@ impl RedisSocketAdapter {
                                             adapter.broadcast_to_room_local(showtime_id, &payload);
                                         }
                                     }
-                                } else if channel_name == crate::keys::global_events_channel() {
-                                    if let Ok(event) = serde_json::from_str::<PubSubEvent>(&payload)
-                                    {
-                                        match event {
-                                            PubSubEvent::LockSlotsResponse {
-                                                user_id,
-                                                showtime_id,
-                                                success,
-                                                locked_seat_ids,
-                                                failed_seat_ids,
-                                            } => {
-                                                let response_payload = serde_json::json!({
-                                                    "event": "lock_slots_response",
-                                                    "showtime_id": showtime_id,
-                                                    "success": success,
-                                                    "locked_seat_ids": locked_seat_ids,
-                                                    "failed_seat_ids": failed_seat_ids,
-                                                })
-                                                .to_string();
-                                                adapter
-                                                    .send_to_user_local(user_id, &response_payload);
-                                            }
-                                            PubSubEvent::Register { .. }
-                                            | PubSubEvent::Disconnect { .. } => {}
-                                            _ => {}
+                                } else if channel_name == crate::keys::global_events_channel()
+                                    && let Ok(event) = serde_json::from_str::<PubSubEvent>(&payload)
+                                {
+                                    match event {
+                                        PubSubEvent::LockSlotsResponse {
+                                            user_id,
+                                            showtime_id,
+                                            success,
+                                            locked_seat_ids,
+                                            failed_seat_ids,
+                                        } => {
+                                            let response_payload = serde_json::json!({
+                                                "event": "lock_slots_response",
+                                                "showtime_id": showtime_id,
+                                                "success": success,
+                                                "locked_seat_ids": locked_seat_ids,
+                                                "failed_seat_ids": failed_seat_ids,
+                                            })
+                                            .to_string();
+                                            adapter.send_to_user_local(user_id, &response_payload);
                                         }
+                                        PubSubEvent::Register { .. }
+                                        | PubSubEvent::Disconnect { .. } => {}
+                                        _ => {}
                                     }
                                 }
                             }

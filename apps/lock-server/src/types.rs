@@ -1,8 +1,6 @@
 use serde::{Deserialize, Serialize};
 
 pub const LOCK_TTL_SECS: i64 = 300;
-pub const LOCK_TTL_MS: u64 = 300_000;
-pub const PROCESSING_GRACE_SECS: i64 = 20;
 
 pub fn default_action() -> String {
     "lock".to_string()

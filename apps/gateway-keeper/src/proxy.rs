@@ -19,6 +19,13 @@ use bookit_proto::search::SearchRequest;
 use bookit_proto::search::search_service_client::SearchServiceClient;
 use std::collections::HashMap;
 
+struct ProxyTarget<'a> {
+    service_name: &'a str,
+    base_url: &'a str,
+    client: &'a reqwest::Client,
+    circuit_breaker: &'a RedisCircuitBreaker,
+}
+
 pub async fn proxy_to_search_server(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
@@ -68,46 +75,43 @@ pub async fn proxy_to_http_server(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    proxy_request(
-        "http-server",
-        &state.http_server_url,
-        &state.http_client,
-        &state.circuit_breaker,
-        method,
-        original_uri,
-        headers,
-        body,
-    )
-    .await
+    let target = ProxyTarget {
+        service_name: "http-server",
+        base_url: &state.http_server_url,
+        client: &state.http_client,
+        circuit_breaker: &state.circuit_breaker,
+    };
+    proxy_request(target, method, original_uri, headers, body).await
 }
 
 async fn proxy_request(
-    service_name: &str,
-    target_base_url: &str,
-    client: &reqwest::Client,
-    cb: &RedisCircuitBreaker,
+    target: ProxyTarget<'_>,
     method: Method,
     uri: Uri,
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    if !cb.allow_request(service_name).await {
+    if !target
+        .circuit_breaker
+        .allow_request(target.service_name)
+        .await
+    {
         warn!(
-            service = %service_name,
+            service = %target.service_name,
             uri = %uri,
             "Circuit breaker OPEN: returning 503 Service Unavailable without calling downstream server"
         );
         return RedisCircuitBreaker::service_busy_response();
     }
 
-    let base = target_base_url.trim_end_matches('/');
+    let base = target.base_url.trim_end_matches('/');
     let path_and_query = uri
         .path_and_query()
         .map(|pq| pq.as_str())
         .unwrap_or_else(|| uri.path());
     let target_url = format!("{}{}", base, path_and_query);
 
-    let mut req_builder = client.request(method.clone(), &target_url);
+    let mut req_builder = target.client.request(method.clone(), &target_url);
     for (key, value) in headers.iter() {
         if key != HOST && key != CONNECTION {
             req_builder = req_builder.header(key, value);
@@ -118,7 +122,7 @@ async fn proxy_request(
         Ok(r) => r,
         Err(err) => {
             error!(
-                service = %service_name,
+                service = %target.service_name,
                 error = %err,
                 "Failed to build proxy request for {}",
                 target_url
@@ -127,20 +131,26 @@ async fn proxy_request(
         }
     };
 
-    match client.execute(req).await {
+    match target.client.execute(req).await {
         Ok(res) => {
             let status = res.status();
             if status.is_server_error() {
-                cb.record_failure(service_name).await;
+                target
+                    .circuit_breaker
+                    .record_failure(target.service_name)
+                    .await;
                 warn!(
-                    service = %service_name,
+                    service = %target.service_name,
                     status = %status,
                     "Downstream service returned 5xx error; recording failure"
                 );
                 return RedisCircuitBreaker::service_busy_response();
             }
 
-            cb.record_success(service_name).await;
+            target
+                .circuit_breaker
+                .record_success(target.service_name)
+                .await;
 
             let mut response_builder = Response::builder().status(status);
             for (key, value) in res.headers().iter() {
@@ -164,9 +174,12 @@ async fn proxy_request(
                 })
         }
         Err(err) => {
-            cb.record_failure(service_name).await;
+            target
+                .circuit_breaker
+                .record_failure(target.service_name)
+                .await;
             error!(
-                service = %service_name,
+                service = %target.service_name,
                 error = %err,
                 "Downstream service unreachable; recording failure and returning 503"
             );

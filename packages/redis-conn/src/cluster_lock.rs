@@ -2,7 +2,7 @@ use crate::seat_lock::SeatLock;
 use async_trait::async_trait;
 use redis::AsyncCommands;
 use redis::cluster_async::ClusterConnection;
-use tracing::{error, info};
+use tracing::info;
 
 #[derive(Clone)]
 pub struct ClusterLock {

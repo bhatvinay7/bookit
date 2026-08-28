@@ -14,7 +14,6 @@ use uuid::Uuid;
 
 #[derive(DbEnum, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[ExistingTypePath = "crate::schema::sql_types::UserRole"]
-
 pub enum UserRole {
     User,
     Admin,
@@ -22,7 +21,6 @@ pub enum UserRole {
 
 #[derive(DbEnum, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[ExistingTypePath = "crate::schema::sql_types::BookingStatus"]
-
 pub enum BookingStatus {
     Pending,
     Confirmed,
@@ -31,7 +29,6 @@ pub enum BookingStatus {
 
 #[derive(DbEnum, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[ExistingTypePath = "crate::schema::sql_types::SeatStatus"]
-
 pub enum SeatStatus {
     Available,
     Locked,
@@ -42,7 +39,6 @@ pub enum SeatStatus {
 
 #[derive(DbEnum, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[ExistingTypePath = "crate::schema::sql_types::ShowType"]
-
 pub enum ShowType {
     #[db_rename = "Movie"]
     Movie,
@@ -56,7 +52,6 @@ pub enum ShowType {
 
 #[derive(DbEnum, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[ExistingTypePath = "crate::schema::sql_types::LayoutSeatClass"]
-
 pub enum LayoutSeatClass {
     #[db_rename = "Standard"]
     Standard,

@@ -9,11 +9,11 @@ pub async fn init_es_index(client: &HttpClient, es_url: &str) {
 
     // Check if index exists
     let res = client.head(&index_url).send().await;
-    if let Ok(response) = res {
-        if response.status().is_success() {
-            println!("Elasticsearch index 'shows' already exists.");
-            return;
-        }
+    if let Ok(response) = res
+        && response.status().is_success()
+    {
+        println!("Elasticsearch index 'shows' already exists.");
+        return;
     }
 
     // Create index with edge_ngram for partial matching
@@ -69,12 +69,12 @@ pub async fn initial_sync(coll: &Collection<Show>, client: &HttpClient, es_url: 
 
     let mut count = 0;
     while let Some(result) = cursor.next().await {
-        if let Ok(show) = result {
-            if let Some(oid) = &show.id {
-                let doc_url = format!("{}/shows/_doc/{}", es_url, oid.to_hex());
-                let _ = client.put(&doc_url).json(&show).send().await;
-                count += 1;
-            }
+        if let Ok(show) = result
+            && let Some(oid) = &show.id
+        {
+            let doc_url = format!("{}/shows/_doc/{}", es_url, oid.to_hex());
+            let _ = client.put(&doc_url).json(&show).send().await;
+            count += 1;
         }
     }
     println!("Initial sync complete. Indexed {} shows.", count);

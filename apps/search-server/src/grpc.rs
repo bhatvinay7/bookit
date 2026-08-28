@@ -100,26 +100,26 @@ impl SearchService for GrpcSearchService {
 
         let mut shows = Vec::new();
 
-        if let Ok(response) = res {
-            if let Ok(body) = response.json::<Value>().await {
-                if let Some(hits) = body
-                    .get("hits")
-                    .and_then(|h| h.get("hits"))
-                    .and_then(|h| h.as_array())
-                {
-                    for hit in hits {
-                        if let Some(source) = hit.get("_source") {
-                            let id = hit
-                                .get("_id")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            let title = source
-                                .get("title")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or_default()
-                                .to_string();
-                            shows.push(json!({
+        if let Ok(response) = res
+            && let Ok(body) = response.json::<Value>().await
+            && let Some(hits) = body
+                .get("hits")
+                .and_then(|h| h.get("hits"))
+                .and_then(|h| h.as_array())
+        {
+            for hit in hits {
+                if let Some(source) = hit.get("_source") {
+                    let id = hit
+                        .get("_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let title = source
+                        .get("title")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    shows.push(json!({
                                 "id": id,
                                 "title": title,
                                 "image": source.get("poster_url").cloned().unwrap_or(Value::Null),
@@ -130,8 +130,6 @@ impl SearchService for GrpcSearchService {
                                 "show_type": source.get("show_type").cloned().unwrap_or(json!("Event")),
                                 "tags": source.get("tags").cloned().unwrap_or(json!([]))
                             }));
-                        }
-                    }
                 }
             }
         }

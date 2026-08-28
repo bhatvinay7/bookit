@@ -1,7 +1,7 @@
 use redis::{AsyncCommands, aio::ConnectionLike};
 use redis_conn::{RedisPool, SeatLock, keys};
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::Value;
 use tracing::error;
 
 #[derive(Debug, Serialize)]
@@ -73,27 +73,6 @@ where
         .await;
 }
 
-async fn seat_state<C>(redis_cli: &mut C, schedule_id: i32, seat_id: i32) -> SeatState
-where
-    C: ConnectionLike + Send,
-{
-    let Some(offset) = seat_bit_offset(seat_id) else {
-        return SeatState::Available;
-    };
-
-    let key = keys::schedule_seat_bitmap(schedule_id);
-    let values: Vec<i64> = redis::cmd("BITFIELD")
-        .arg(&key)
-        .arg("GET")
-        .arg("u2")
-        .arg(offset)
-        .query_async(redis_cli)
-        .await
-        .unwrap_or_default();
-
-    SeatState::from_bitmap(values.first().copied().unwrap_or_default() as u8)
-}
-
 fn bitmap_snapshots(bitmap: &[u8]) -> Vec<(i32, SeatState)> {
     bitmap
         .iter()
@@ -105,15 +84,6 @@ fn bitmap_snapshots(bitmap: &[u8]) -> Vec<(i32, SeatState)> {
             })
         })
         .collect()
-}
-
-fn make_queue_member(seat_id: i32, schedule_id: i32, user_id: i32) -> String {
-    json!({
-        "seat_id": seat_id,
-        "schedule_id": schedule_id,
-        "user_id": user_id,
-    })
-    .to_string()
 }
 
 fn parse_member_seat_id(member: &str) -> Option<i32> {

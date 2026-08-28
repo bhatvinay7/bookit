@@ -471,19 +471,19 @@ pub async fn update_schedule_seats(
         .map_err(|_| AppError::not_found("Schedule not found"))?;
 
     for seat in body.seats {
-        if let Some(price_str) = &seat.price {
-            if let Ok(price) = BigDecimal::from_str(price_str) {
-                diesel::update(
-                    schedule_seats::table.filter(
-                        schedule_seats::id
-                            .eq(seat.id)
-                            .and(schedule_seats::schedule_id.eq(schedule_id)),
-                    ),
-                )
-                .set(schedule_seats::price.eq(price))
-                .execute(&mut conn)
-                .map_err(|e| AppError::internal(e.to_string()))?;
-            }
+        if let Some(price_str) = &seat.price
+            && let Ok(price) = BigDecimal::from_str(price_str)
+        {
+            diesel::update(
+                schedule_seats::table.filter(
+                    schedule_seats::id
+                        .eq(seat.id)
+                        .and(schedule_seats::schedule_id.eq(schedule_id)),
+                ),
+            )
+            .set(schedule_seats::price.eq(price))
+            .execute(&mut conn)
+            .map_err(|e| AppError::internal(e.to_string()))?;
         }
         if let Some(new_status) = &seat.status {
             diesel::update(

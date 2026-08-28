@@ -48,7 +48,7 @@ pub async fn list_categories(
         .find(doc! {})
         .sort(sort)
         .await
-        .map_err(|e| AppError::internal(&format!("DB Error: {}", e)))?;
+        .map_err(|e| AppError::internal(format!("DB Error: {}", e)))?;
 
     let mut categories = Vec::new();
     while let Some(doc) = cursor.next().await {
@@ -92,7 +92,7 @@ pub async fn create_category(
     let res = col
         .insert_one(&new_cat)
         .await
-        .map_err(|e| AppError::internal(&format!("Failed to insert category: {}", e)))?;
+        .map_err(|e| AppError::internal(format!("Failed to insert category: {}", e)))?;
 
     let inserted_id = res
         .inserted_id
@@ -157,7 +157,7 @@ pub async fn update_category(
     let res = col
         .update_one(doc! { "_id": oid }, update_doc)
         .await
-        .map_err(|e| AppError::internal(&format!("Failed to update category: {}", e)))?;
+        .map_err(|e| AppError::internal(format!("Failed to update category: {}", e)))?;
 
     if res.matched_count == 0 {
         return Err(AppError::not_found("Category not found"));
@@ -183,7 +183,7 @@ pub async fn delete_category(
     let res = col
         .delete_one(doc! { "_id": oid })
         .await
-        .map_err(|e| AppError::internal(&format!("DB Error: {}", e)))?;
+        .map_err(|e| AppError::internal(format!("DB Error: {}", e)))?;
 
     if res.deleted_count == 0 {
         return Err(AppError::not_found("Category not found"));
