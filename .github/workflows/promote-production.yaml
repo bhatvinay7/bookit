@@ -120,8 +120,13 @@ jobs:
       - name: Validate production overlays
         working-directory: gitops-repo
         run: |
-          kubectl kustomize apps/regions/prod/us-east >/dev/null
-          kubectl kustomize apps/regions/prod/eu-west >/dev/null
+          found=false
+          for target in apps/regions/prod/*; do
+            [ -d "$target" ] || continue
+            found=true
+            kubectl kustomize "$target" >/dev/null
+          done
+          [ "$found" = true ] || { echo "No production regional overlays found."; exit 1; }
 
       - name: Push promotion branch and open PR
         working-directory: gitops-repo

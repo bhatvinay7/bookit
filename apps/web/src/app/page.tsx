@@ -470,7 +470,7 @@ export default function Home() {
                         <div className="w-2.5 h-2.5 rounded-full bg-green-400" />
                       </div>
                       <div className="flex-1 mx-4">
-                        <div className="bg-slate-700 rounded-md px-3 py-1 text-[10px] text-slate-400 font-mono">bookit.live/dashboard</div>
+                        <div className="bg-slate-700 rounded-md px-3 py-1 text-[10px] text-slate-400 font-mono">bookit4u.shop/dashboard</div>
                       </div>
                     </div>
                     
@@ -604,13 +604,13 @@ export default function Home() {
                 <div className="p-6 rounded-2xl bg-[var(--card-bg)] border border-[var(--border)] shadow-sm">
                   <h3 className="text-lg font-bold text-[var(--text-primary)] mb-4">Partner With Us</h3>
                   <div className="flex flex-col gap-3">
-                    <a href="mailto:creators@bookit.live" className="flex items-center gap-3 group">
+                    <a href="mailto:creators@bookit4u.shop" className="flex items-center gap-3 group">
                       <div className="w-8 h-8 rounded-lg bg-[var(--bg-subtle)] flex items-center justify-center border border-[var(--border)] group-hover:border-blue-400 transition-colors">
                         <Mail className="w-3.5 h-3.5 text-[var(--text-secondary)]" />
                       </div>
                       <div>
                         <p className="text-[10px] text-[var(--text-muted)] font-semibold uppercase tracking-wider">Email</p>
-                        <p className="text-sm text-[var(--text-primary)] font-medium group-hover:text-blue-500 transition-colors">creators@bookit.live</p>
+                        <p className="text-sm text-[var(--text-primary)] font-medium group-hover:text-blue-500 transition-colors">creators@bookit4u.shop</p>
                       </div>
                     </a>
                     <a href="tel:+1800266548" className="flex items-center gap-3 group">
