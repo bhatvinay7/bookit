@@ -106,6 +106,7 @@ jobs:
       - name: Install ArgoCD & Apply App of Apps
         env:
           ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
+          SEALED_SECRETS_CERT: ${{ secrets.SEALED_SECRETS_CERT }}
         run: |
           if kubectl get deployment argocd-server -n argocd >/dev/null 2>&1; then
             echo "ArgoCD is already installed. Skipping installation."
@@ -122,6 +123,21 @@ jobs:
             kubectl set resources deployment argocd-server -n argocd --limits=cpu=1000m,memory=1Gi --requests=cpu=250m,memory=256Mi
             kubectl set resources deployment argocd-repo-server -n argocd --limits=cpu=1000m,memory=1Gi --requests=cpu=250m,memory=256Mi
           fi
+
+          echo "Waiting for the Argo CD control plane..."
+          for attempt in {1..60}; do
+            if kubectl get configmap argocd-cm -n argocd >/dev/null 2>&1; then
+              break
+            fi
+            echo "Waiting for argocd-cm ($attempt/60)..."
+            sleep 5
+          done
+          kubectl get configmap argocd-cm -n argocd >/dev/null || {
+            echo "Argo CD did not create argocd-cm within 5 minutes."
+            exit 1
+          }
+          kubectl rollout status deployment/argocd-server -n argocd --timeout=5m
+          kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=5m
 
           # ----------------------------------------------------------------------
           # OPTIONAL: Self-Hosted High Availability Database Deployments
@@ -159,6 +175,16 @@ jobs:
             --set controller.service.externalTrafficPolicy=Local \
             --set controller.metrics.enabled=true
 
+          sealed_secrets_cert=""
+          if [ -n "$SEALED_SECRETS_CERT" ]; then
+            sealed_secrets_cert="/tmp/sealed-secrets-cert.pem"
+            printf '%s' "$SEALED_SECRETS_CERT" | base64 --decode > "$sealed_secrets_cert"
+            chmod 600 "$sealed_secrets_cert"
+            echo "Using the configured Sealed Secrets public certificate for offline sealing."
+          else
+            echo "No SEALED_SECRETS_CERT configured; sealing region configuration through the controller API."
+          fi
+
           echo "Installing the Sealed Secrets controller application..."
           kubectl apply -f argocd/argocd-sealed-secrets.yaml
 
@@ -189,14 +215,24 @@ jobs:
           controller_name="${controller_deployment#deployment.apps/}"
 
           # Create and apply the SealedSecret for region configuration from GitHub Secrets
+          kubeseal_args=(
+            --controller-name "$controller_name"
+            --controller-namespace kube-system
+            --format yaml
+          )
+          if [ -n "$sealed_secrets_cert" ]; then
+            kubeseal_args+=(--cert "$sealed_secrets_cert")
+          fi
+          sealed_region_config=$(mktemp /tmp/sealed-region-config.XXXXXX.yaml)
           kubectl create secret generic stateful-region-config -n argocd \
             --from-literal=primary_region="${{ secrets.PRIMARY_REGION }}" \
             --from-literal=secondary_region="${{ secrets.SECONDARY_REGION }}" \
             --from-literal=multi_region_enabled="${{ vars.ENABLE_MULTI_REGION }}" \
             --from-literal=use_cloud_provider="${{ secrets.USE_CLOUD_PROVIDER }}" \
             --dry-run=client -o yaml | \
-          kubeseal --controller-name "$controller_name" --controller-namespace kube-system --format yaml > sealed-region-config.yaml
-          kubectl apply -f sealed-region-config.yaml
+          kubeseal "${kubeseal_args[@]}" > "$sealed_region_config"
+          kubectl apply -f "$sealed_region_config"
+          rm -f "$sealed_region_config" "$sealed_secrets_cert"
 
           echo "Labeling Primary Region in ArgoCD for StatefulServices..."
           curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
