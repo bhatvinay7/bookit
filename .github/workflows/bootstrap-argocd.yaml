@@ -204,6 +204,10 @@ jobs:
               --yes
           fi
 
+          echo "Waiting for essential controllers (cert-manager) to be fully ready..."
+          kubectl wait --for=condition=Available deployment --all -n cert-manager --timeout=5m
+          # Sealed Secrets was already waited on above
+
           if [ "${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}" = "production" ]; then
             echo "Bootstrapping production applications from main."
             kubectl apply -f argocd/prod-apps.yaml
