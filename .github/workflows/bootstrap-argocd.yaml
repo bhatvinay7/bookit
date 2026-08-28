@@ -242,9 +242,7 @@ jobs:
           PRIMARY_CONTEXT=$(kubectl config current-context)
           kubectl config set-context "$PRIMARY_CONTEXT" --namespace=argocd
           argocd login --core
-          argocd cluster add "$PRIMARY_CONTEXT" --in-cluster --yes || true
-          
-          argocd cluster set https://kubernetes.default.svc \
+          argocd cluster add "$PRIMARY_CONTEXT" --in-cluster --yes \
             --label deploy-stateful-services=true \
             --label environment=${{ inputs.target_environment }} \
             --label region=${{ secrets.PRIMARY_REGION }} \
