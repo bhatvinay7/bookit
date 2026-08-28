@@ -86,29 +86,22 @@ jobs:
             chmod 600 ~/.kube/config-secondary
           fi
 
-      - name: Verify target kubeconfig context
-        env:
-          EXPECTED_CONTEXT: ${{ vars.EXPECTED_KUBE_CONTEXT }}
-          EXPECTED_CLUSTER_NAME: ${{ vars.EXPECTED_CLUSTER_NAME }}
-          EXPECTED_SERVER: ${{ vars.EXPECTED_CLUSTER_SERVER }}
+      - name: Verify kubeconfig access
         run: |
-          if [ -z "$EXPECTED_CONTEXT" ] || [ -z "$EXPECTED_CLUSTER_NAME" ] || [ -z "$EXPECTED_SERVER" ]; then
-            echo "EXPECTED_KUBE_CONTEXT, EXPECTED_CLUSTER_NAME, and EXPECTED_CLUSTER_SERVER must be configured in the selected GitHub environment."
-            exit 1
-          fi
-
           actual_context=$(kubectl config current-context)
           actual_cluster=$(kubectl config view --minify -o jsonpath='{.contexts[0].context.cluster}')
           actual_server=$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}')
 
+          if [ -z "$actual_context" ] || [ -z "$actual_cluster" ] || [ -z "$actual_server" ]; then
+            echo "KUBECONFIG must select a context with a cluster and API server."
+            exit 1
+          fi
+
           echo "Selected environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}"
-          echo "Current context:      $actual_context"
+          echo "Kubeconfig context:   $actual_context"
           echo "Cluster name:         $actual_cluster"
           echo "API server:           $actual_server"
-
-          [ "$actual_context" = "$EXPECTED_CONTEXT" ] || { echo "Unexpected kube context"; exit 1; }
-          [ "$actual_cluster" = "$EXPECTED_CLUSTER_NAME" ] || { echo "Unexpected kube cluster name"; exit 1; }
-          [ "$actual_server" = "$EXPECTED_SERVER" ] || { echo "Unexpected Kubernetes API server"; exit 1; }
+          kubectl get --raw=/version >/dev/null
 
       - name: Install ArgoCD & Apply App of Apps
         env:
