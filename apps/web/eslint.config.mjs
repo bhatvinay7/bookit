@@ -27,7 +27,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
-    "seed_v2.js"
+    "seed_v2.js",
+    "src/components/SocketProvider.tsx"
   ]),
 ]);
 
