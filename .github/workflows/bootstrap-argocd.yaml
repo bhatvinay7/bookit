@@ -168,8 +168,25 @@ jobs:
           tar -xzf kubeseal-0.27.1-linux-amd64.tar.gz kubeseal
           sudo install -m 755 kubeseal /usr/local/bin/kubeseal
 
-          # Wait for the controller pods to be healthy
-          kubectl wait --for=condition=Available deployment -l app.kubernetes.io/name=sealed-secrets -n kube-system --timeout=15m
+          # Argo CD reconciles the Application asynchronously. Wait for its controller
+          # Deployment to be created before asking Kubernetes for its availability.
+          controller_deployment=""
+          for attempt in {1..90}; do
+            controller_deployment=$(kubectl get deployment -n kube-system \
+              -l app.kubernetes.io/name=sealed-secrets -o name 2>/dev/null | head -n 1)
+            if [ -n "$controller_deployment" ]; then
+              break
+            fi
+            echo "Waiting for Argo CD to create the Sealed Secrets controller ($attempt/90)..."
+            sleep 10
+          done
+          if [ -z "$controller_deployment" ]; then
+            echo "Sealed Secrets controller deployment was not created within 15 minutes."
+            kubectl get application sealed-secrets -n argocd -o yaml || true
+            exit 1
+          fi
+          kubectl rollout status "$controller_deployment" -n kube-system --timeout=5m
+          controller_name="${controller_deployment#deployment.apps/}"
 
           # Create and apply the SealedSecret for region configuration from GitHub Secrets
           kubectl create secret generic stateful-region-config -n argocd \
@@ -178,7 +195,7 @@ jobs:
             --from-literal=multi_region_enabled="${{ vars.ENABLE_MULTI_REGION }}" \
             --from-literal=use_cloud_provider="${{ secrets.USE_CLOUD_PROVIDER }}" \
             --dry-run=client -o yaml | \
-          kubeseal --controller-name sealed-secrets --controller-namespace kube-system --format yaml > sealed-region-config.yaml
+          kubeseal --controller-name "$controller_name" --controller-namespace kube-system --format yaml > sealed-region-config.yaml
           kubectl apply -f sealed-region-config.yaml
 
           echo "Labeling Primary Region in ArgoCD for StatefulServices..."
