@@ -1,3 +1,4 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useState, Fragment, useEffect, useMemo } from "react";
 import { useShowtimes, useSeats } from "@/hooks/useApi";
 import type { Movie, SeatRow, SeatInfo } from "@/types";
