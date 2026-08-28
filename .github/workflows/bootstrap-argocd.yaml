@@ -242,7 +242,7 @@ jobs:
           PRIMARY_CONTEXT=$(kubectl config current-context)
           kubectl config set-context "$PRIMARY_CONTEXT" --namespace=argocd
           argocd login --core
-          argocd cluster add "$PRIMARY_CONTEXT" --in-cluster --yes \
+          argocd cluster add "$PRIMARY_CONTEXT" --in-cluster --yes --upsert \
             --label deploy-stateful-services=true \
             --label environment=${{ inputs.target_environment }} \
             --label region=${{ secrets.PRIMARY_REGION }} \
@@ -258,6 +258,7 @@ jobs:
             
             argocd cluster add "$SECONDARY_CONTEXT" \
               --kubeconfig "$HOME/.kube/config-secondary" \
+              --upsert \
               --label deploy-stateful-services=true \
               --label environment=${{ inputs.target_environment }} \
               --label region=${{ secrets.SECONDARY_REGION }} \
