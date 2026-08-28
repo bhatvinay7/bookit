@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tested_commit_sha:
-        description: Full 40-character SHA previously built successfully on dev
+        description: Full 40-character SHA previously built successfully on development
         required: true
         type: string
       services:
@@ -47,7 +47,7 @@ jobs:
             exit 1
           }
 
-      - name: Verify commit belongs to dev
+      - name: Verify commit belongs to development
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
@@ -56,10 +56,10 @@ jobs:
         env:
           TESTED_SHA: ${{ inputs.tested_commit_sha }}
         run: |
-          git fetch origin dev
+          git fetch origin development
           git cat-file -e "${TESTED_SHA}^{commit}"
-          git merge-base --is-ancestor "$TESTED_SHA" origin/dev || {
-            echo "$TESTED_SHA is not part of the dev branch."
+          git merge-base --is-ancestor "$TESTED_SHA" origin/development || {
+            echo "$TESTED_SHA is not part of the development branch."
             exit 1
           }
 
@@ -146,4 +146,4 @@ jobs:
           git push origin "$branch"
           gh pr create --repo "$GITOPS_REPO" --base main --head "$branch" \
             --title "Promote tested images ${TESTED_SHA:0:7} to production" \
-            --body "Promotes services \`${REQUESTED_SERVICES}\` from tested dev commit \`${TESTED_SHA}\`. Images are pinned by immutable registry digest. Requires review and merge; this workflow never pushes directly to main."
+            --body "Promotes services \`${REQUESTED_SERVICES}\` from tested development commit \`${TESTED_SHA}\`. Images are pinned by immutable registry digest. Requires review and merge; this workflow never pushes directly to main."

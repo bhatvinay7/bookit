@@ -2,7 +2,7 @@ name: Bootstrap ArgoCD
 
 on:
   push:
-    branches: [dev, main]
+    branches: [development, main]
     paths:
       - ".github/workflows/bootstrap-argocd.yaml"
   workflow_dispatch:
@@ -37,7 +37,7 @@ jobs:
           TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}
           CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
         run: |
-          expected_branch="dev"
+          expected_branch="development"
           if [ "$TARGET_ENVIRONMENT" = "production" ]; then
             expected_branch="main"
             if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$CONFIRM_PRODUCTION" != "PROMOTE-PRODUCTION" ]; then
