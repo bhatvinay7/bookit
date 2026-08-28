@@ -4,7 +4,7 @@ on:
   push:
     branches: [dev, main]
     paths:
-      - '.github/workflows/bootstrap-argocd.yaml'
+      - ".github/workflows/bootstrap-argocd.yaml"
   workflow_dispatch:
     inputs:
       target_environment:
@@ -66,7 +66,7 @@ jobs:
             exit 1
           fi
           mkdir -p ~/.kube
-          
+
           # Check if the secret is plaintext YAML
           if printf "%s" "$KUBE_DATA" | grep -q "apiVersion:"; then
             printf "%s" "$KUBE_DATA" > ~/.kube/config
@@ -101,6 +101,8 @@ jobs:
           [ "$actual_server" = "$EXPECTED_SERVER" ] || { echo "Unexpected Kubernetes API server"; exit 1; }
 
       - name: Install ArgoCD & Apply App of Apps
+        env:
+          ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
         run: |
           if kubectl get deployment argocd-server -n argocd >/dev/null 2>&1; then
             echo "ArgoCD is already installed. Skipping installation."
@@ -117,7 +119,7 @@ jobs:
             kubectl set resources deployment argocd-server -n argocd --limits=cpu=1000m,memory=1Gi --requests=cpu=250m,memory=256Mi
             kubectl set resources deployment argocd-repo-server -n argocd --limits=cpu=1000m,memory=1Gi --requests=cpu=250m,memory=256Mi
           fi
-          
+
           # ----------------------------------------------------------------------
           # OPTIONAL: Self-Hosted High Availability Database Deployments
           # If you are not using managed cloud services for Redis/Postgres/Mongo/RMQ,
@@ -129,7 +131,7 @@ jobs:
 
           echo "Installing cert-manager CRDs to prevent GitOps race conditions..."
           kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.2/cert-manager.crds.yaml
-          
+
           echo "Installing cert-manager via Helm..."
           helm repo add jetstack https://charts.jetstack.io
           helm repo update
@@ -149,14 +151,22 @@ jobs:
             --set controller.service.nodePorts.https=32443 \
             --set controller.service.externalTrafficPolicy=Local \
             --set controller.metrics.enabled=true
-          
+
           echo "Installing the Sealed Secrets controller application..."
           kubectl apply -f argocd/argocd-sealed-secrets.yaml
 
           if [ "${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}" = "production" ]; then
             echo "Bootstrapping production applications from main."
-            kubectl apply -f argocd/prod-apps.yaml
+            if [ "$ENABLE_MULTI_REGION" = "true" ]; then
+              kubectl apply -f argocd/prod-apps-multi-region.yaml
+            else
+              kubectl apply -f argocd/prod-apps.yaml
+            fi
           else
             echo "Bootstrapping development applications from dev."
-            kubectl apply -f argocd/dev-apps.yaml
+            if [ "$ENABLE_MULTI_REGION" = "true" ]; then
+              kubectl apply -f argocd/dev-apps-multi-region.yaml
+            else
+              kubectl apply -f argocd/dev-apps.yaml
+            fi
           fi

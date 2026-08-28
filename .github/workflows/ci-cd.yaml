@@ -2,15 +2,15 @@ name: CI/CD & GitOps Automation
 
 on:
   push:
-    branches: [dev,main]
+    branches: [dev, main]
   pull_request:
-    branches: [dev,main]
+    branches: [dev, main]
   workflow_dispatch:
     inputs:
       service:
-        description: 'Service to build'
+        description: "Service to build"
         required: true
-        default: 'all'
+        default: "all"
         type: choice
         options:
           - all
@@ -31,8 +31,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-
-
   validate:
     name: Validate Node.js & Rust Workspace
     runs-on: ubuntu-22.04
@@ -54,7 +52,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'pnpm'
+          cache: "pnpm"
 
       - name: Install Node.js dependencies
         run: pnpm install --frozen-lockfile
@@ -226,7 +224,7 @@ jobs:
     environment: development
     permissions:
       contents: read
-      packages: write   # required to push to ghcr.io
+      packages: write # required to push to ghcr.io
     strategy:
       fail-fast: false
       matrix:
@@ -351,8 +349,8 @@ jobs:
         working-directory: gitops-repo
         env:
           DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
-          DEPLOY_REGIONS: ${{ vars.DEPLOY_REGIONS }}
-          KUBE_CONTEXTS: ${{ vars.KUBE_CONTEXTS }}
+          DEPLOY_REGIONS: ${{ secrets.DEPLOY_REGIONS }}
+          KUBE_CONTEXTS: ${{ secrets.KUBE_CONTEXTS }}
           ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
           GHCR_USERNAME: ${{ github.repository_owner }}
           GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
@@ -423,9 +421,12 @@ jobs:
             echo "DEPLOY_REGIONS and KUBE_CONTEXTS must be non-empty comma-separated lists of equal length."
             exit 1
           fi
-          if [ "$ENABLE_MULTI_REGION" != "true" ] && [ "${#regions[@]}" -ne 1 ]; then
-            echo "ENABLE_MULTI_REGION=false requires exactly one DEPLOY_REGIONS/KUBE_CONTEXTS entry."
-            exit 1
+          if [ "$ENABLE_MULTI_REGION" = "true" ]; then
+            echo "ENABLE_MULTI_REGION=true; sealing every configured region."
+          else
+            echo "ENABLE_MULTI_REGION=false; sealing only the first configured region."
+            regions=("${regions[0]}")
+            contexts=("${contexts[0]}")
           fi
           helm repo add sealed-secrets https://bitnami-labs.github.io/sealed-secrets
           helm repo update
