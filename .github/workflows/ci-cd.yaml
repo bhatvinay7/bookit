@@ -30,6 +30,10 @@ concurrency:
   group: ci-gitops-${{ github.ref_name }}
   cancel-in-progress: false
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   validate:
     name: Validate Node.js & Rust Workspace
