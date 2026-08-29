@@ -352,7 +352,6 @@ jobs:
           DEPLOY_REGIONS: ${{ secrets.DEPLOY_REGIONS }}
           KUBE_CONTEXTS: ${{ secrets.KUBE_CONTEXTS }}
           ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
-          SEALED_SECRETS_CERT: ${{ secrets.SEALED_SECRETS_CERT }}
           GHCR_USERNAME: ${{ github.repository_owner }}
           GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
@@ -433,14 +432,6 @@ jobs:
             contexts=("${contexts[0]}")
           fi
 
-          sealed_secrets_cert_path=""
-          if [ -n "$SEALED_SECRETS_CERT" ]; then
-            sealed_secrets_cert_path=$(mktemp /tmp/sealed-secrets-cert.XXXXXX.pem)
-            printf '%s' "$SEALED_SECRETS_CERT" | base64 --decode > "$sealed_secrets_cert_path"
-            chmod 600 "$sealed_secrets_cert_path"
-          fi
-          trap 'rm -f "$sealed_secrets_cert_path"' EXIT
-
           for index in "${!regions[@]}"; do
             controller_deployment=$(kubectl --context "${contexts[$index]}" get deployment \
               -n kube-system -l app.kubernetes.io/name=sealed-secrets -o name | head -n 1)
@@ -450,8 +441,7 @@ jobs:
             fi
             kubectl --context "${contexts[$index]}" rollout status "$controller_deployment" \
               -n kube-system --timeout=5m
-            SEALED_SECRETS_CERT_PATH="$sealed_secrets_cert_path" \
-              ./scripts/seal-cluster-secrets.sh "$DEPLOY_ENV" "${regions[$index]}" "${contexts[$index]}"
+            ./scripts/seal-cluster-secrets.sh "$DEPLOY_ENV" "${regions[$index]}" "${contexts[$index]}"
           done
 
       - name: Commit and push GitOps tag updates
