@@ -352,6 +352,7 @@ jobs:
           DEPLOY_REGIONS: ${{ secrets.DEPLOY_REGIONS }}
           KUBE_CONTEXTS: ${{ secrets.KUBE_CONTEXTS }}
           ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
+          SEALED_SECRETS_CERT: ${{ secrets.SEALED_SECRETS_CERT }}
           GHCR_USERNAME: ${{ github.repository_owner }}
           GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
@@ -365,6 +366,10 @@ jobs:
           ELASTICSEARCH_URL: ${{ secrets.ELASTICSEARCH_URL }}
           GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          CLOUDINARY_CLOUD_NAME: ${{ secrets.CLOUDINARY_CLOUD_NAME }}
+          CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
+          CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
+          GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL || secrets.GATEWAY_KEEPER_GRPC_URL }}
           GATEWAY_KEEPER_GRPC_URL: ${{ secrets.GATEWAY_KEEPER_GRPC_URL }}
           HTTP_SERVER_URL: ${{ secrets.HTTP_SERVER_URL }}
           SEARCH_SERVER_GRPC_URL: ${{ secrets.SEARCH_SERVER_GRPC_URL }}
@@ -377,9 +382,11 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           SUPPORT_EMAIL: ${{ secrets.SUPPORT_EMAIL }}
           NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_SOCKET_URL: ${{ secrets.NEXT_PUBLIC_SOCKET_URL || secrets.NEXT_PUBLIC_WS_BASE_URL }}
           NEXT_PUBLIC_WS_BASE_URL: ${{ secrets.NEXT_PUBLIC_WS_BASE_URL }}
           NEXT_PUBLIC_SEARCH_API_URL: ${{ secrets.NEXT_PUBLIC_SEARCH_API_URL }}
           NEXT_PUBLIC_RAZORPAY_KEY_ID: ${{ secrets.NEXT_PUBLIC_RAZORPAY_KEY_ID }}
+          NEXT_PUBLIC_USE_REMOTE_STOCKFISH: ${{ vars.NEXT_PUBLIC_USE_REMOTE_STOCKFISH || 'false' }}
           REDIS_URL: ${{ secrets.REDIS_URL }}
           REDIS_CLUSTER_URL: ${{ secrets.REDIS_CLUSTER_URL }}
           REDIS_CLUSTER_URLS: ${{ secrets.REDIS_CLUSTER_URLS }}
@@ -425,13 +432,26 @@ jobs:
             regions=("${regions[0]}")
             contexts=("${contexts[0]}")
           fi
-          helm repo add sealed-secrets https://bitnami.github.io/sealed-secrets
-          helm repo update
+
+          sealed_secrets_cert_path=""
+          if [ -n "$SEALED_SECRETS_CERT" ]; then
+            sealed_secrets_cert_path=$(mktemp /tmp/sealed-secrets-cert.XXXXXX.pem)
+            printf '%s' "$SEALED_SECRETS_CERT" | base64 --decode > "$sealed_secrets_cert_path"
+            chmod 600 "$sealed_secrets_cert_path"
+          fi
+          trap 'rm -f "$sealed_secrets_cert_path"' EXIT
+
           for index in "${!regions[@]}"; do
-            helm upgrade --install sealed-secrets sealed-secrets/sealed-secrets \
-              --kube-context "${contexts[$index]}" --namespace kube-system \
-              --create-namespace --version 2.16.1 --wait --timeout 5m
-            ./scripts/seal-cluster-secrets.sh "$DEPLOY_ENV" "${regions[$index]}" "${contexts[$index]}"
+            controller_deployment=$(kubectl --context "${contexts[$index]}" get deployment \
+              -n kube-system -l app.kubernetes.io/name=sealed-secrets -o name | head -n 1)
+            if [ -z "$controller_deployment" ]; then
+              echo "Sealed Secrets controller is not installed in context ${contexts[$index]}. Bootstrap it before CI sealing."
+              exit 1
+            fi
+            kubectl --context "${contexts[$index]}" rollout status "$controller_deployment" \
+              -n kube-system --timeout=5m
+            SEALED_SECRETS_CERT_PATH="$sealed_secrets_cert_path" \
+              ./scripts/seal-cluster-secrets.sh "$DEPLOY_ENV" "${regions[$index]}" "${contexts[$index]}"
           done
 
       - name: Commit and push GitOps tag updates

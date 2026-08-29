@@ -107,6 +107,7 @@ jobs:
         env:
           ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
           SEALED_SECRETS_CERT: ${{ secrets.SEALED_SECRETS_CERT }}
+          GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL || secrets.GATEWAY_KEEPER_GRPC_URL }}
         run: |
           if kubectl get deployment argocd-server -n argocd >/dev/null 2>&1; then
             echo "ArgoCD is already installed. Skipping installation."
@@ -138,6 +139,26 @@ jobs:
           }
           kubectl rollout status deployment/argocd-server -n argocd --timeout=5m
           kubectl rollout status deployment/argocd-repo-server -n argocd --timeout=5m
+
+          echo "Ensuring the Sealed Secrets controller is healthy before other platform components..."
+          kubectl apply -f argocd/argocd-sealed-secrets.yaml
+          controller_deployment=""
+          for attempt in {1..90}; do
+            controller_deployment=$(kubectl get deployment -n kube-system \
+              -l app.kubernetes.io/name=sealed-secrets -o name 2>/dev/null | head -n 1)
+            if [ -n "$controller_deployment" ]; then
+              break
+            fi
+            echo "Waiting for Argo CD to create the Sealed Secrets controller ($attempt/90)..."
+            sleep 10
+          done
+          if [ -z "$controller_deployment" ]; then
+            echo "Sealed Secrets controller deployment was not created within 15 minutes."
+            kubectl get application sealed-secrets -n argocd -o yaml || true
+            exit 1
+          fi
+          kubectl rollout status "$controller_deployment" -n kube-system --timeout=5m
+          controller_name="${controller_deployment#deployment.apps/}"
 
           # ----------------------------------------------------------------------
           # OPTIONAL: Self-Hosted High Availability Database Deployments
@@ -185,34 +206,11 @@ jobs:
             echo "No SEALED_SECRETS_CERT configured; sealing region configuration through the controller API."
           fi
 
-          echo "Installing the Sealed Secrets controller application..."
-          kubectl apply -f argocd/argocd-sealed-secrets.yaml
-
-          echo "Waiting for Sealed Secrets Controller and Registering Region Configs..."
+          echo "Registering region configuration with the healthy Sealed Secrets controller..."
           # Install kubeseal CLI
           wget -q https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.1/kubeseal-0.27.1-linux-amd64.tar.gz
           tar -xzf kubeseal-0.27.1-linux-amd64.tar.gz kubeseal
           sudo install -m 755 kubeseal /usr/local/bin/kubeseal
-
-          # Argo CD reconciles the Application asynchronously. Wait for its controller
-          # Deployment to be created before asking Kubernetes for its availability.
-          controller_deployment=""
-          for attempt in {1..90}; do
-            controller_deployment=$(kubectl get deployment -n kube-system \
-              -l app.kubernetes.io/name=sealed-secrets -o name 2>/dev/null | head -n 1)
-            if [ -n "$controller_deployment" ]; then
-              break
-            fi
-            echo "Waiting for Argo CD to create the Sealed Secrets controller ($attempt/90)..."
-            sleep 10
-          done
-          if [ -z "$controller_deployment" ]; then
-            echo "Sealed Secrets controller deployment was not created within 15 minutes."
-            kubectl get application sealed-secrets -n argocd -o yaml || true
-            exit 1
-          fi
-          kubectl rollout status "$controller_deployment" -n kube-system --timeout=5m
-          controller_name="${controller_deployment#deployment.apps/}"
 
           # Create and apply the SealedSecret for region configuration from GitHub Secrets
           kubeseal_args=(
@@ -229,6 +227,7 @@ jobs:
             --from-literal=secondary_region="${{ secrets.SECONDARY_REGION }}" \
             --from-literal=multi_region_enabled="${{ vars.ENABLE_MULTI_REGION }}" \
             --from-literal=use_cloud_provider="${{ secrets.USE_CLOUD_PROVIDER }}" \
+            --from-literal=GRPC_SERVER_URL="$GRPC_SERVER_URL" \
             --dry-run=client -o yaml | \
           kubeseal "${kubeseal_args[@]}" > "$sealed_region_config"
           kubectl apply -f "$sealed_region_config"
