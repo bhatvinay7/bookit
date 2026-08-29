@@ -106,7 +106,6 @@ jobs:
       - name: Install ArgoCD & Apply App of Apps
         env:
           ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
-          SEALED_SECRETS_CERT: ${{ secrets.SEALED_SECRETS_CERT }}
           GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL || secrets.GATEWAY_KEEPER_GRPC_URL }}
         run: |
           if kubectl get deployment argocd-server -n argocd >/dev/null 2>&1; then
@@ -179,7 +178,10 @@ jobs:
             --namespace cert-manager --create-namespace \
             --version v1.13.2 \
             --set webhook.timeoutSeconds=10
-            
+          kubectl rollout status deployment --all -n cert-manager --timeout=5m
+          echo "Waiting 30 seconds for cert-manager controllers to stabilize before installing ingress..."
+          sleep 30
+
           echo "Installing ingress-nginx with LoadBalancer configuration..."
           helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx
           helm repo update
@@ -196,16 +198,6 @@ jobs:
             --set controller.service.externalTrafficPolicy=Local \
             --set controller.metrics.enabled=true
 
-          sealed_secrets_cert=""
-          if [ -n "$SEALED_SECRETS_CERT" ]; then
-            sealed_secrets_cert="/tmp/sealed-secrets-cert.pem"
-            printf '%s' "$SEALED_SECRETS_CERT" | base64 --decode > "$sealed_secrets_cert"
-            chmod 600 "$sealed_secrets_cert"
-            echo "Using the configured Sealed Secrets public certificate for offline sealing."
-          else
-            echo "No SEALED_SECRETS_CERT configured; sealing region configuration through the controller API."
-          fi
-
           echo "Registering region configuration with the healthy Sealed Secrets controller..."
           # Install kubeseal CLI
           wget -q https://github.com/bitnami-labs/sealed-secrets/releases/download/v0.27.1/kubeseal-0.27.1-linux-amd64.tar.gz
@@ -218,9 +210,6 @@ jobs:
             --controller-namespace kube-system
             --format yaml
           )
-          if [ -n "$sealed_secrets_cert" ]; then
-            kubeseal_args+=(--cert "$sealed_secrets_cert")
-          fi
           sealed_region_config=$(mktemp /tmp/sealed-region-config.XXXXXX.yaml)
           kubectl create secret generic stateful-region-config -n argocd \
             --from-literal=primary_region="${{ secrets.PRIMARY_REGION }}" \
@@ -231,7 +220,7 @@ jobs:
             --dry-run=client -o yaml | \
           kubeseal "${kubeseal_args[@]}" > "$sealed_region_config"
           kubectl apply -f "$sealed_region_config"
-          rm -f "$sealed_region_config" "$sealed_secrets_cert"
+          rm -f "$sealed_region_config"
 
           echo "Labeling Primary Region in ArgoCD for StatefulServices..."
           curl -sSL -o argocd-linux-amd64 https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
