@@ -107,6 +107,7 @@ jobs:
         env:
           ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
           GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL || secrets.GATEWAY_KEEPER_GRPC_URL }}
+          TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}
         run: |
           if kubectl get deployment argocd-server -n argocd >/dev/null 2>&1; then
             echo "ArgoCD is already installed. Skipping installation."
@@ -178,7 +179,7 @@ jobs:
             --namespace cert-manager --create-namespace \
             --version v1.13.2 \
             --set webhook.timeoutSeconds=10
-          kubectl rollout status deployment --all -n cert-manager --timeout=5m
+          kubectl wait --for=condition=Available deployment --all -n cert-manager --timeout=5m
           echo "Waiting 30 seconds for cert-manager controllers to stabilize before installing ingress..."
           sleep 30
 
@@ -232,7 +233,7 @@ jobs:
           argocd login --core
           argocd cluster add "$PRIMARY_CONTEXT" --in-cluster --yes --upsert \
             --label deploy-stateful-services=true \
-            --label environment=${{ inputs.target_environment }} \
+            --label environment="$TARGET_ENVIRONMENT" \
             --label region=${{ secrets.PRIMARY_REGION }} \
             --label multi_region_enabled=${{ vars.ENABLE_MULTI_REGION }} \
             --label primary_region=${{ secrets.PRIMARY_REGION }} \
@@ -248,7 +249,7 @@ jobs:
               --kubeconfig "$HOME/.kube/config-secondary" \
               --upsert \
               --label deploy-stateful-services=true \
-              --label environment=${{ inputs.target_environment }} \
+              --label environment="$TARGET_ENVIRONMENT" \
               --label region=${{ secrets.SECONDARY_REGION }} \
               --label multi_region_enabled=true \
               --label primary_region=${{ secrets.PRIMARY_REGION }} \
@@ -262,7 +263,7 @@ jobs:
           kubectl wait --for=condition=Available deployment -l app.kubernetes.io/component=controller -n ingress-nginx --timeout=5m
           # Sealed Secrets was already waited on above
 
-          if [ "${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}" = "production" ]; then
+          if [ "$TARGET_ENVIRONMENT" = "production" ]; then
             echo "Bootstrapping production applications from main."
             kubectl apply -f argocd/prod-apps.yaml
             kubectl apply -f argocd/stateful-applicationset.yaml
