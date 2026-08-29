@@ -267,8 +267,10 @@ jobs:
             echo "Bootstrapping production applications from main."
             kubectl apply -f argocd/prod-apps.yaml
             kubectl apply -f argocd/stateful-applicationset.yaml
+            kubectl apply -f argocd/argocd-ingress.yaml
           else
             echo "Bootstrapping development applications from dev."
             kubectl apply -f argocd/dev-apps.yaml
             kubectl apply -f argocd/stateful-applicationset.yaml
+            kubectl apply -f argocd/argocd-ingress.yaml
           fi
