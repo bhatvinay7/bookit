@@ -172,6 +172,9 @@ jobs:
           echo "Installing cert-manager CRDs to prevent GitOps race conditions..."
           kubectl apply -f https://github.com/cert-manager/cert-manager/releases/download/v1.13.2/cert-manager.crds.yaml
 
+          echo "Installing KEDA CRDs to prevent GitOps race conditions..."
+          kubectl apply --server-side -f https://github.com/kedacore/keda/releases/download/v2.20.2/keda-2.20.2-crds.yaml
+
           echo "Installing cert-manager via Helm..."
           helm repo add jetstack https://charts.jetstack.io
           helm repo update
