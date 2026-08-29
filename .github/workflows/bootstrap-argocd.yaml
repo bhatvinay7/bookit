@@ -209,7 +209,6 @@ jobs:
           )
           sealed_region_config=$(mktemp /tmp/sealed-region-config.XXXXXX.yaml)
           kubectl create secret generic stateful-region-config -n argocd \
-
             --from-literal=use_cloud_provider="${{ secrets.USE_CLOUD_PROVIDER }}" \
             --from-literal=GRPC_SERVER_URL="$GRPC_SERVER_URL" \
             --dry-run=client -o yaml | \
@@ -229,7 +228,6 @@ jobs:
             --label deploy-stateful-services=true \
             --label environment="$TARGET_ENVIRONMENT" \
             --label region=${{ secrets.PRIMARY_REGION }} \
-
             --label use_cloud_provider=${{ secrets.USE_CLOUD_PROVIDER }}
 
 
