@@ -424,13 +424,8 @@ jobs:
             echo "DEPLOY_REGIONS and KUBE_CONTEXTS must be non-empty comma-separated lists of equal length."
             exit 1
           fi
-          if [ "$ENABLE_MULTI_REGION" = "true" ]; then
-            echo "ENABLE_MULTI_REGION=true; sealing every configured region."
-          else
-            echo "ENABLE_MULTI_REGION=false; sealing only the first configured region."
-            regions=("${regions[0]}")
-            contexts=("${contexts[0]}")
-          fi
+          regions=("${regions[0]}")
+          contexts=("${contexts[0]}")
 
           for index in "${!regions[@]}"; do
             controller_deployment=$(kubectl --context "${contexts[$index]}" get deployment \
