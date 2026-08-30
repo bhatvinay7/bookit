@@ -120,6 +120,7 @@ jobs:
             http-server:
               - 'apps/http-server/**'
               - 'packages/db/**'
+              - 'packages/rmq-conn/**'
               - 'packages/redis-conn/**'
               - 'packages/mongo-conn/**'
               - 'Cargo.toml'
