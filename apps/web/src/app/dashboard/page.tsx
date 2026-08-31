@@ -1,4 +1,5 @@
 "use client";
+import { AuthGuard } from "@/components/AuthGuard";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useState, useSyncExternalStore } from "react";
 import { useTheme } from "next-themes";
