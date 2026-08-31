@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import Image from "next/image";
-import { Ticket, Star, ChevronRight, Film, Music, Gamepad2, Search, Zap, TicketCheck, Mail, Phone, Armchair, Menu, X, ArrowRight, Shield, Sparkles, Smartphone, Monitor, Calendar, Clock, MapPin, CreditCard, Bell, BarChart3, Users, TrendingUp } from "lucide-react";
+import { Ticket, Star, ChevronRight, Film, Music, Gamepad2, Search, Zap, TicketCheck, Mail, Phone, Armchair, Menu, X, ArrowRight, Shield, Sparkles, Smartphone, Monitor, Calendar, Clock, MapPin, CreditCard, Bell, BarChart3, Users, TrendingUp, LogOut, LogIn, UserPlus, Sun, Moon } from "lucide-react";
 import { UserNav } from "@/components/UserNav";
 import { useState, useEffect } from "react";
+import { useTheme } from "next-themes";
 import { motion, AnimatePresence } from "framer-motion";
 import type { Show } from "@/types";
 import ShowCard from "@/components/shows/ShowCard";
@@ -14,6 +15,7 @@ export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { theme, setTheme } = useTheme();
 
   const [shows, setShows] = useState<Array<Show & { _id?: { $oid: string } }>>([]);
   const [loading, setLoading] = useState(true);
@@ -115,17 +117,56 @@ export default function Home() {
                   <X className="w-5 h-5" />
                 </button>
               </div>
-              <div className="flex flex-col gap-4 flex-1">
-                {isLoggedIn && (
-                  <Link href="/dashboard" onClick={() => setIsMobileMenuOpen(false)}>
-                    <button className="w-full py-3 font-semibold rounded-xl bg-[var(--text-primary)] text-[var(--bg)]">
-                      Go to Dashboard
+              <div className="flex flex-col gap-3 flex-1">
+                {isLoggedIn ? (
+                  <>
+                    <Link href="/dashboard" onClick={() => setIsMobileMenuOpen(false)}>
+                      <button className="w-full py-3 font-semibold rounded-xl bg-[var(--text-primary)] text-[var(--bg)] flex items-center justify-center gap-2">
+                        Dashboard
+                      </button>
+                    </Link>
+                    <Link href="/tickets" onClick={() => setIsMobileMenuOpen(false)}>
+                      <button className="w-full py-3 font-semibold rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] text-[var(--text-primary)] flex items-center justify-center gap-2">
+                        <Ticket className="w-4 h-4" /> My Tickets
+                      </button>
+                    </Link>
+                    <button 
+                      onClick={() => {
+                        localStorage.removeItem("user_token");
+                        localStorage.removeItem("user_email");
+                        window.location.href = "/";
+                      }}
+                      className="w-full py-3 font-semibold rounded-xl text-red-500 bg-red-500/10 flex items-center justify-center gap-2 mt-auto"
+                    >
+                      <LogOut className="w-4 h-4" /> Logout
                     </button>
-                  </Link>
+                  </>
+                ) : (
+                  <>
+                    <Link href="/login" onClick={() => setIsMobileMenuOpen(false)}>
+                      <button className="w-full py-3 font-semibold rounded-xl bg-[var(--text-primary)] text-[var(--bg)] flex items-center justify-center gap-2">
+                        <LogIn className="w-4 h-4" /> Login
+                      </button>
+                    </Link>
+                    <Link href="/register" onClick={() => setIsMobileMenuOpen(false)}>
+                      <button className="w-full py-3 font-semibold rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] text-[var(--text-primary)] flex items-center justify-center gap-2">
+                        <UserPlus className="w-4 h-4" /> Sign Up
+                      </button>
+                    </Link>
+                  </>
                 )}
-                <div className="border border-[var(--border)] rounded-xl p-3 bg-[var(--bg-subtle)]">
-                  <UserNav />
-                </div>
+                
+                {/* Theme Toggle */}
+                <button
+                  onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+                  className={`w-full py-3 font-semibold rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] text-[var(--text-primary)] flex items-center justify-center gap-2 ${isLoggedIn ? '' : 'mt-auto'}`}
+                >
+                  {theme === "dark" ? (
+                    <><Sun className="w-4 h-4" /> Light Mode</>
+                  ) : (
+                    <><Moon className="w-4 h-4" /> Dark Mode</>
+                  )}
+                </button>
               </div>
             </motion.div>
           </div>
