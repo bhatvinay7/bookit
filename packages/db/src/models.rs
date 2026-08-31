@@ -313,6 +313,10 @@ pub struct OutboxEvent {
     pub created_at: DateTime<Utc>,
     pub published_at: Option<DateTime<Utc>>,
     pub attempts: i32,
+    pub processing_at: Option<DateTime<Utc>>,
+    pub next_attempt_at: DateTime<Utc>,
+    pub last_error: Option<String>,
+    pub dead_lettered_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Insertable, Debug, Clone, Serialize, Deserialize)]
@@ -326,4 +330,8 @@ pub struct NewOutboxEvent {
     pub created_at: DateTime<Utc>,
     pub published_at: Option<DateTime<Utc>>,
     pub attempts: i32,
+    pub processing_at: Option<DateTime<Utc>>,
+    pub next_attempt_at: DateTime<Utc>,
+    pub last_error: Option<String>,
+    pub dead_lettered_at: Option<DateTime<Utc>>,
 }

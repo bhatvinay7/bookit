@@ -79,6 +79,10 @@ diesel::table! {
         created_at -> Timestamptz,
         published_at -> Nullable<Timestamptz>,
         attempts -> Int4,
+        processing_at -> Nullable<Timestamptz>,
+        next_attempt_at -> Timestamptz,
+        last_error -> Nullable<Text>,
+        dead_lettered_at -> Nullable<Timestamptz>,
     }
 }
 

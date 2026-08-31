@@ -11,8 +11,6 @@ tracing = "0.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 tower-http = { version = "0.5.2", features = ["cors", "trace"] }
-lapin = { version = "4.10.0", features = ["rustls"] }
-rmq-conn = { path = "../../packages/rmq-conn" }
 bookit-db    = { path = "../../packages/db" }
 bookit-redis = { path = "../../packages/redis-conn", package = "redis-conn" }
 rustls = { version = "0.23", features = ["ring"] }

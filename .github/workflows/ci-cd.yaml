@@ -20,6 +20,7 @@ on:
           - lock-server
           - notification-worker
           - payment-processor
+          - outbox-server
           - search-server
           - web
 env:
@@ -36,7 +37,7 @@ permissions:
 
 jobs:
   validate:
-    name: Validate Node.js & Rust Workspace
+    name: Validate Node.js, Rust & Outbox
     runs-on: ubuntu-22.04
     services:
       redis:
@@ -81,6 +82,14 @@ jobs:
 
       - name: Link-check Rust workspace (cargo check)
         run: cargo check --workspace --all-targets
+
+      # These tests do not require live PostgreSQL, Redis, or RabbitMQ services.
+      # Keep them enabled even while the older environment-backed suite is paused.
+      - name: Test transactional outbox and payment idempotency
+        run: |
+          cargo test -p outbox-server --test outbox_policy
+          cargo test -p payment-processor --test payload_parsing
+          cargo test -p http-server --test payment_idempotency
 
       # Temporarily disabled as the redis tests are causing errors
       # - name: Prepare Rust test environment
@@ -155,6 +164,13 @@ jobs:
               - 'packages/db/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+            outbox-server:
+              - 'apps/outbox-server/**'
+              - 'packages/rmq-conn/**'
+              - 'packages/db/**'
+              - 'packages/telemetry/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
             search-server:
               - 'apps/search-server/**'
               - 'packages/rmq-conn/**'
@@ -170,7 +186,7 @@ jobs:
         id: resolve
         shell: bash
         run: |
-          ALL_SERVICES='["http-server","ws-server","gateway-keeper","lock-server","notification-worker","payment-processor","search-server","web"]'
+          ALL_SERVICES='["http-server","ws-server","gateway-keeper","lock-server","notification-worker","payment-processor","outbox-server","search-server","web"]'
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ "${{ inputs.service }}" = "all" ]; then
@@ -199,6 +215,7 @@ jobs:
           if [ "${{ steps.filter.outputs.lock-server }}" = "true" ];        then services+=("lock-server"); fi
           if [ "${{ steps.filter.outputs.notification-worker }}" = "true" ]; then services+=("notification-worker"); fi
           if [ "${{ steps.filter.outputs.payment-processor }}" = "true" ];  then services+=("payment-processor"); fi
+          if [ "${{ steps.filter.outputs['outbox-server'] }}" = "true" ];   then services+=("outbox-server"); fi
           if [ "${{ steps.filter.outputs.search-server }}" = "true" ];      then services+=("search-server"); fi
           if [ "${{ steps.filter.outputs.web }}" = "true" ];                then services+=("web"); fi
 
@@ -251,6 +268,15 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ github.repository_owner }}/bookit-${{ matrix.service }}
           tags: |
             type=sha,prefix=commit-
+
+      - name: Verify service Docker build definition
+        env:
+          SERVICE: ${{ matrix.service }}
+        run: |
+          test -f "apps/${SERVICE}/Dockerfile" || {
+            echo "Missing apps/${SERVICE}/Dockerfile"
+            exit 1
+          }
 
       - name: Build and push Multi-Stage image
         uses: docker/build-push-action@v5
@@ -439,6 +465,33 @@ jobs:
             kubectl --context "${contexts[$index]}" rollout status "$controller_deployment" \
               -n kube-system --timeout=5m
             ./scripts/seal-cluster-secrets.sh "$DEPLOY_ENV" "${regions[$index]}" "${contexts[$index]}"
+          done
+
+      - name: Validate rendered GitOps deployment
+        working-directory: gitops-repo
+        env:
+          DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+          DEPLOY_REGIONS: ${{ secrets.DEPLOY_REGIONS }}
+        run: |
+          IFS=',' read -ra regions <<< "$DEPLOY_REGIONS"
+          regions=("${regions[0]}")
+          for region in "${regions[@]}"; do
+            target="apps/regions/${DEPLOY_ENV}/${region}"
+            rendered=$(mktemp)
+            kubectl kustomize "$target" > "$rendered"
+            grep -q 'name: outbox-server' "$rendered" || {
+              echo "Rendered manifest is missing outbox-server for ${DEPLOY_ENV}/${region}."
+              exit 1
+            }
+            grep -q 'name: migrate-payment-outbox' "$rendered" || {
+              echo "Rendered manifest is missing the outbox migration init container."
+              exit 1
+            }
+            grep -q 'name: RABBITMQ_URL' "$rendered" || {
+              echo "Rendered outbox deployment is missing its RabbitMQ secret reference."
+              exit 1
+            }
+            rm "$rendered"
           done
 
       - name: Commit and push GitOps tag updates

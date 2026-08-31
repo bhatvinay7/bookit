@@ -90,7 +90,7 @@ jobs:
           TESTED_SHA: ${{ inputs.tested_commit_sha }}
           REQUESTED_SERVICES: ${{ inputs.services }}
         run: |
-          all_services=(http-server ws-server gateway-keeper lock-server notification-worker payment-processor search-server web)
+          all_services=(http-server ws-server gateway-keeper lock-server notification-worker payment-processor outbox-server search-server web)
           if [ "$REQUESTED_SERVICES" = "all" ]; then
             services=("${all_services[@]}")
           else
@@ -124,7 +124,17 @@ jobs:
           for target in apps/regions/prod/*; do
             [ -d "$target" ] || continue
             found=true
-            kubectl kustomize "$target" >/dev/null
+            rendered=$(mktemp)
+            kubectl kustomize "$target" > "$rendered"
+            grep -q 'name: outbox-server' "$rendered" || {
+              echo "Production overlay $target is missing outbox-server."
+              exit 1
+            }
+            grep -q 'name: migrate-payment-outbox' "$rendered" || {
+              echo "Production overlay $target is missing the migration init container."
+              exit 1
+            }
+            rm "$rendered"
           done
           [ "$found" = true ] || { echo "No production regional overlays found."; exit 1; }
 
