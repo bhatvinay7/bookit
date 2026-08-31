@@ -30,7 +30,7 @@ jobs:
   bootstrap-argocd:
     name: Bootstrap ArgoCD on Cluster
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'deployment1') }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}
     steps:
       - name: Validate environment and source branch
         env:
@@ -90,7 +90,7 @@ jobs:
             exit 1
           fi
 
-          echo "Selected environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'deployment1') }}"
+          echo "Selected environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}"
           echo "Kubeconfig context:   $actual_context"
           echo "Cluster name:         $actual_cluster"
           echo "API server:           $actual_server"
