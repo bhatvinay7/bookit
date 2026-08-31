@@ -18,10 +18,24 @@ pub async fn search_handler(
     let search_url = format!("{}/shows/_search", state.es_url);
 
     let query_obj = json!({
-        "multi_match": {
-            "query": query.q,
-            "fields": ["title^3", "tags^2", "venue", "description", "category_ids", "show_type"],
-            "fuzziness": "AUTO"
+        "bool": {
+            "should": [
+                {
+                    "multi_match": {
+                        "query": &query.q,
+                        "fields": ["title^3", "tags^2", "venue", "description", "category_ids", "show_type"],
+                        "fuzziness": "AUTO"
+                    }
+                },
+                {
+                    "multi_match": {
+                        "query": &query.q,
+                        "fields": ["title.phonetic^2"],
+                        "analyzer": "phonetic_analyzer"
+                    }
+                }
+            ],
+            "minimum_should_match": 1
         }
     });
 
