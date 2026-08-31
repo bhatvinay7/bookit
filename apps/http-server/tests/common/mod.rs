@@ -47,7 +47,6 @@ pub async fn create_test_app() -> Router {
         single_node_lock,
         mongo_client,
         mongo_db_name,
-        rmq_channel: None,
     });
 
     Router::new()

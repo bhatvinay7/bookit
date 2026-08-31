@@ -1,28 +1,23 @@
 use bigdecimal::BigDecimal;
-use chrono::Utc;
-use diesel::prelude::*;
+use diesel::RunQueryDsl;
 use futures::StreamExt;
 use lapin::{
-    BasicProperties, Channel, Consumer,
-    options::{BasicAckOptions, BasicNackOptions, BasicPublishOptions},
+    Consumer,
+    options::{BasicAckOptions, BasicNackOptions},
 };
 use serde_json::json;
 use std::str::FromStr;
 use std::sync::Arc;
 use uuid::Uuid;
 
-use crate::payment::process_razorpay_refund;
-use bookit_db::{
-    db::DbPool,
-    models::{NewOrder, NewOutboxEvent, NewUserAudit, SeatStatus},
-    schema::{
-        orders::dsl as od, outbox_events::dsl as oe, schedule_seats::dsl as ss, tickets::dsl as tk,
-        user_audits::dsl as ua,
-    },
+use crate::{
+    payment::process_razorpay_refund,
+    repository::{self, CancellationCommit, CheckoutCommit},
 };
+use bookit_db::db::DbPool;
 use redis_conn::{RedisPool, SeatLock};
 
-fn parse_seat_ids(payload: &serde_json::Value) -> Vec<i32> {
+pub fn parse_seat_ids(payload: &serde_json::Value) -> Vec<i32> {
     if let Some(arr) = payload["seat_ids"].as_array() {
         arr.iter()
             .filter_map(|v| v.as_i64().map(|x| x as i32))
@@ -37,7 +32,6 @@ fn parse_seat_ids(payload: &serde_json::Value) -> Vec<i32> {
 pub async fn process_messages(
     mut consumer: Consumer,
     db_pool: DbPool,
-    channel: Channel,
     seat_lock: Arc<dyn SeatLock>,
     redis_pool: RedisPool,
 ) {
@@ -94,89 +88,18 @@ pub async fn process_messages(
                         }
                     }
 
-                    // Database Transaction: update seats, order, tickets, insert audit & outbox
-                    let tx_result: Result<(), diesel::result::Error> = {
-                        let mut db_conn = match db_pool.get() {
-                            Ok(c) => c,
-                            Err(_) => return,
-                        };
-                        db_conn.transaction(|conn| {
-                            // 1. Revert seat status to Available
-                            diesel::update(ss::schedule_seats.filter(ss::id.eq_any(&seat_ids)))
-                                .set(ss::status.eq(SeatStatus::Available))
-                                .execute(conn)?;
-
-                            // 2. Update order status to refunded
-                            diesel::update(od::orders.filter(od::id.eq(order_uuid)))
-                                .set(od::status.eq("refunded"))
-                                .execute(conn)?;
-
-                            // 3. Update ticket status to cancelled
-                            diesel::update(tk::tickets.filter(tk::order_id.eq(order_uuid)))
-                                .set(tk::status.eq("cancelled"))
-                                .execute(conn)?;
-
-                            // 4. Create audit log
-                            let audit = NewUserAudit {
-                                id: Uuid::new_v4(),
-                                user_id: user_id_val,
-                                action: "ticket_cancelled".into(),
-                                order_id: order_uuid,
-                                amount: BigDecimal::from_str(amount_str)
-                                    .unwrap_or(BigDecimal::from(0)),
-                                details: json!({ "seat_ids": seat_ids }),
-                            };
-                            diesel::insert_into(ua::user_audits)
-                                .values(&audit)
-                                .execute(conn)?;
-
-                            // 5. Create outbox event for TicketCancelled
-                            let outbox_event = NewOutboxEvent {
-                                id: Uuid::new_v4(),
-                                aggregate_type: "Order".into(),
-                                aggregate_id: order_uuid,
-                                event_type: "TicketCancelled".into(),
-                                payload: json!({
-                                    "order_id": order_uuid.to_string(),
-                                    "user_id": user_id_val,
-                                    "schedule_id": schedule_id_val,
-                                    "seat_ids": seat_ids,
-                                    "amount": amount_str,
-                                }),
-                                created_at: Utc::now(),
-                                published_at: None,
-                                attempts: 0,
-                            };
-                            diesel::insert_into(oe::outbox_events)
-                                .values(&outbox_event)
-                                .execute(conn)?;
-
-                            Ok(())
-                        })
-                    };
+                    let tx_result = repository::commit_cancellation(
+                        &db_pool,
+                        CancellationCommit {
+                            order_id: order_uuid,
+                            user_id: user_id_val,
+                            schedule_id: schedule_id_val,
+                            seat_ids: seat_ids.clone(),
+                            amount: amount_str.to_owned(),
+                        },
+                    );
 
                     if tx_result.is_ok() {
-                        // Fanout event to notification worker
-                        let fanout_msg = json!({
-                            "event_type": "TicketCancelled",
-                            "order_id": order_id_str,
-                            "user_id": user_id_val,
-                            "schedule_id": schedule_id_val,
-                            "seat_ids": seat_ids,
-                            "amount": amount_str,
-                        })
-                        .to_string();
-
-                        let _ = channel
-                            .basic_publish(
-                                "booking_events_exchange".into(),
-                                "".into(),
-                                BasicPublishOptions::default(),
-                                fanout_msg.as_bytes(),
-                                BasicProperties::default().with_delivery_mode(2),
-                            )
-                            .await;
-
                         // Broadcast seat_unlocked to WebSocket Room
                         if let Ok(mut cli) = redis_pool.get().await {
                             let channel_name = format!("room:{}", schedule_id_val);
@@ -219,10 +142,23 @@ pub async fn process_messages(
                     let razorpay_payment_id = payload["razorpay_payment_id"]
                         .as_str()
                         .map(|s| s.to_string());
-                    let payment_request_id = payload["payment_request_id"]
+                    let Some(payment_request_id) = payload["payment_request_id"]
                         .as_str()
                         .and_then(|s| Uuid::parse_str(s).ok())
-                        .unwrap_or_else(Uuid::new_v4);
+                    else {
+                        let _ = delivery
+                            .nack(BasicNackOptions {
+                                multiple: false,
+                                requeue: false,
+                            })
+                            .await;
+                        continue;
+                    };
+
+                    if repository::order_exists(&db_pool, payment_request_id) {
+                        let _ = delivery.ack(BasicAckOptions::default()).await;
+                        continue;
+                    }
 
                     if seat_ids.is_empty() {
                         let _ = delivery
@@ -254,6 +190,21 @@ pub async fn process_messages(
                     }
 
                     if !all_locked {
+                        if let Ok(mut db_conn) = db_pool.get() {
+                            let _ = diesel::sql_query("UPDATE payment_requests SET status = CAST('failed' AS payment_request_status), failure_reason = 'seat lock expired before processing', updated_at = NOW() WHERE id = $1 AND status <> CAST('succeeded' AS payment_request_status)")
+                                .bind::<diesel::sql_types::Uuid,_>(payment_request_id)
+                                .execute(&mut db_conn);
+                        }
+                        if let Ok(mut redis_conn) = redis_pool.get().await {
+                            for seat_id in &seat_ids {
+                                let key = format!("seat_checkout:{schedule_id_val}:{seat_id}");
+                                let _: () = redis::cmd("DEL")
+                                    .arg(&key)
+                                    .query_async(&mut *redis_conn)
+                                    .await
+                                    .unwrap_or_default();
+                            }
+                        }
                         let _ = delivery
                             .nack(BasicNackOptions {
                                 multiple: false,
@@ -265,73 +216,19 @@ pub async fn process_messages(
 
                     let order_uuid = Uuid::new_v4();
 
-                    // Database Transaction: update seats to Booked, insert order, insert audit, insert outbox
-                    let tx_result: Result<(), diesel::result::Error> = {
-                        let mut db_conn = match db_pool.get() {
-                            Ok(c) => c,
-                            Err(_) => return,
-                        };
-                        db_conn.transaction(|conn| {
-                            // 1. Update seats to Booked
-                            diesel::update(ss::schedule_seats.filter(ss::id.eq_any(&seat_ids)))
-                                .set(ss::status.eq(SeatStatus::Booked))
-                                .execute(conn)?;
-
-                            // 2. Create Order
-                            let order = NewOrder {
-                                id: order_uuid,
-                                payment_request_id,
-                                user_id: user_id_val,
-                                schedule_id: schedule_id_val,
-                                seat_ids: json!(seat_ids),
-                                total_amount: BigDecimal::from_str(total_amount)
-                                    .unwrap_or(BigDecimal::from(0)),
-                                razorpay_order_id,
-                                razorpay_payment_id,
-                                status: "completed".into(),
-                            };
-                            diesel::insert_into(od::orders)
-                                .values(&order)
-                                .execute(conn)?;
-
-                            // 3. Create Audit
-                            let audit = NewUserAudit {
-                                id: Uuid::new_v4(),
-                                user_id: user_id_val,
-                                action: "order_completed".into(),
-                                order_id: order_uuid,
-                                amount: BigDecimal::from_str(total_amount)
-                                    .unwrap_or(BigDecimal::from(0)),
-                                details: json!({ "seat_ids": seat_ids }),
-                            };
-                            diesel::insert_into(ua::user_audits)
-                                .values(&audit)
-                                .execute(conn)?;
-
-                            // 4. Create Outbox Event
-                            let outbox_event = NewOutboxEvent {
-                                id: Uuid::new_v4(),
-                                aggregate_type: "Order".into(),
-                                aggregate_id: order_uuid,
-                                event_type: "OrderCompleted".into(),
-                                payload: json!({
-                                    "order_id": order_uuid.to_string(),
-                                    "user_id": user_id_val,
-                                    "schedule_id": schedule_id_val,
-                                    "seat_ids": seat_ids,
-                                    "amount": total_amount,
-                                }),
-                                created_at: Utc::now(),
-                                published_at: None,
-                                attempts: 0,
-                            };
-                            diesel::insert_into(oe::outbox_events)
-                                .values(&outbox_event)
-                                .execute(conn)?;
-
-                            Ok(())
-                        })
-                    };
+                    let tx_result = repository::commit_checkout(
+                        &db_pool,
+                        CheckoutCommit {
+                            order_id: order_uuid,
+                            payment_request_id,
+                            user_id: user_id_val,
+                            schedule_id: schedule_id_val,
+                            seat_ids: seat_ids.clone(),
+                            total_amount: total_amount.to_owned(),
+                            razorpay_order_id,
+                            razorpay_payment_id,
+                        },
+                    );
 
                     if tx_result.is_ok() {
                         // Release Redis locks and mark as booked
@@ -360,27 +257,6 @@ pub async fn process_messages(
                                     .await
                                     .unwrap_or(());
                         }
-
-                        // Broadcast to Fanout (Emails, Tickets)
-                        let fanout_msg = json!({
-                            "event_type": "OrderCompleted",
-                            "order_id": order_uuid.to_string(),
-                            "user_id": user_id_val,
-                            "schedule_id": schedule_id_val,
-                            "seat_ids": seat_ids,
-                            "amount": total_amount,
-                        })
-                        .to_string();
-
-                        let _ = channel
-                            .basic_publish(
-                                "booking_events_exchange".into(),
-                                "".into(),
-                                BasicPublishOptions::default(),
-                                fanout_msg.as_bytes(),
-                                BasicProperties::default().with_delivery_mode(2),
-                            )
-                            .await;
 
                         let _ = delivery.ack(BasicAckOptions::default()).await;
                         println!("Checkout Processed successfully!");

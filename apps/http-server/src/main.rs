@@ -60,32 +60,6 @@ async fn main() {
         .expect("Failed to connect to MongoDB");
     let mongo_db_name = env::var("MONGODB_DB").unwrap_or_else(|_| "bookit".into());
 
-    let rmq_channel = match rmq_conn::connect_with_retry().await {
-        Ok(conn) => match conn.create_channel().await {
-            Ok(ch) => {
-                let mut q_args = std::collections::BTreeMap::new();
-                q_args.insert(
-                    "x-dead-letter-exchange".into(),
-                    lapin::types::AMQPValue::LongString("payment_dlx".into()),
-                );
-                q_args.insert(
-                    "x-dead-letter-routing-key".into(),
-                    lapin::types::AMQPValue::LongString("failed".into()),
-                );
-                let _ = ch
-                    .queue_declare(
-                        "payment_processing".into(),
-                        lapin::options::QueueDeclareOptions::default(),
-                        lapin::types::FieldTable::from(q_args),
-                    )
-                    .await;
-                Some(ch)
-            }
-            Err(_) => None,
-        },
-        Err(_) => None,
-    };
-
     let app_state = Arc::new(AppState {
         db_pool,
         redis_client,
@@ -94,7 +68,6 @@ async fn main() {
         jwt_secret,
         mongo_client: Arc::new(mongo_client),
         mongo_db_name,
-        rmq_channel,
     });
 
     let app = Router::new()

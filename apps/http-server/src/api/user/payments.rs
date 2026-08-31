@@ -8,7 +8,6 @@ use diesel::{
     Connection, ExpressionMethods, OptionalExtension, QueryDsl, RunQueryDsl, sql_query,
     sql_types::{Integer, Text},
 };
-use lapin::{BasicProperties, options::BasicPublishOptions};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -33,7 +32,7 @@ pub struct PaymentRequest {
 #[derive(Serialize)]
 pub struct PaymentAccepted {
     pub payment_request_id: String,
-    pub status: &'static str,
+    pub status: String,
 }
 
 pub async fn request_payment(
@@ -75,8 +74,43 @@ pub async fn request_payment(
         }
     }
 
-    // The caller supplies only ids. Ownership is verified against the single-node seat lock keys,
-    // handling CRC16 distributed hashing correctly.
+    let mut conn = state
+        .db_pool
+        .get()
+        .map_err(|_| AppError::internal("database unavailable"))?;
+
+    let existing: Option<ExistingPaymentRow> = sql_query(
+        "SELECT id::text AS id, status::text AS status, schedule_id, seat_ids::text AS seat_ids FROM payment_requests WHERE idempotency_key = $1 AND user_id = $2",
+    )
+    .bind::<Text, _>(&request.idempotency_key)
+    .bind::<Integer, _>(user_id)
+    .get_result(&mut conn)
+    .optional()
+    .map_err(|e| AppError::internal(e.to_string()))?;
+    if let Some(existing) = existing {
+        let existing_seats: Vec<i32> = serde_json::from_str(&existing.seat_ids)
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        if !same_payment_intent(
+            existing.schedule_id,
+            &existing_seats,
+            request.schedule_id,
+            &request.seat_ids,
+        ) {
+            return Err(AppError::bad_request(
+                "idempotency_key was already used for a different payment request",
+            ));
+        }
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(PaymentAccepted {
+                payment_request_id: existing.id,
+                status: existing.status,
+            }),
+        ));
+    }
+
+    // Verify ownership before creating the durable payment request. The checkout marker is
+    // retained until the payment processor succeeds or rejects the message.
     for seat_id in &request.seat_ids {
         let owner = state
             .single_node_lock
@@ -89,17 +123,19 @@ pub async fn request_payment(
         }
     }
 
-    let mut conn = state
-        .db_pool
-        .get()
-        .map_err(|_| AppError::internal("database unavailable"))?;
-
     use bookit_db::schema::schedule_seats;
     let seat_prices: Vec<bigdecimal::BigDecimal> = schedule_seats::table
         .filter(schedule_seats::id.eq_any(&request.seat_ids))
+        .filter(schedule_seats::schedule_id.eq(request.schedule_id))
         .select(schedule_seats::price)
         .load(&mut conn)
         .map_err(|_| AppError::internal("failed to load seats"))?;
+
+    if seat_prices.len() != request.seat_ids.len() {
+        return Err(AppError::bad_request(
+            "one or more seats do not belong to the requested schedule",
+        ));
+    }
 
     let mut sub_total = bigdecimal::BigDecimal::from(0);
     for price in seat_prices {
@@ -110,58 +146,46 @@ pub async fn request_payment(
     let total_amount = sub_total + tax_amt;
     let total_amount_str = total_amount.to_string();
 
-    let existing: Option<String> = sql_query(
-        "SELECT id::text AS id FROM payment_requests WHERE idempotency_key = $1 AND user_id = $2",
-    )
-    .bind::<Text, _>(&request.idempotency_key)
-    .bind::<Integer, _>(user_id)
-    .get_result::<IdRow>(&mut conn)
-    .optional()
-    .map_err(|e| AppError::internal(e.to_string()))?
-    .map(|v| v.id);
-    let payment_request_id = if let Some(id) = existing {
-        id
-    } else {
-        let id = Uuid::new_v4().to_string();
-        let payload = serde_json::json!({
-            "payment_request_id": id,
-            "user_id": user_id,
-            "schedule_id": request.schedule_id,
-            "seat_ids": request.seat_ids,
-            "amount": total_amount_str,
-            "razorpay_order_id": request.razorpay_order_id,
-            "razorpay_payment_id": request.razorpay_payment_id
-        })
-        .to_string();
-        conn.transaction::<_, diesel::result::Error, _>(|conn| {
-            sql_query("INSERT INTO payment_requests (id,idempotency_key,user_id,schedule_id,seat_ids,status) VALUES (CAST($1 AS uuid),$2,$3,$4,CAST($5 AS jsonb),CAST('pending' AS payment_request_status))")
-                .bind::<Text,_>(&id).bind::<Text,_>(&request.idempotency_key).bind::<Integer,_>(user_id).bind::<Integer,_>(request.schedule_id).bind::<Text,_>(&serde_json::to_string(&request.seat_ids).unwrap()).execute(conn)?;
-            sql_query("INSERT INTO outbox_events (id,aggregate_type,aggregate_id,event_type,payload,attempts) VALUES (CAST($1 AS uuid),'payment',CAST($2 AS uuid),'payment.requested',CAST($3 AS jsonb),0)")
-                .bind::<Text,_>(Uuid::new_v4().to_string()).bind::<Text,_>(&id).bind::<Text,_>(&payload).execute(conn)?; Ok(())
-        }).map_err(|e| AppError::internal(e.to_string()))?;
-        id
-    };
-
-    // Publish checkout message to RabbitMQ using existing channel
-    let channel = state
-        .rmq_channel
-        .as_ref()
-        .ok_or_else(|| AppError::internal("RMQ channel not available"))?;
-
+    let payment_request_id = Uuid::new_v4().to_string();
+    let checkout_owner = format!("{}:{}", user_id, request.idempotency_key);
     let mut redis_conn = state
         .redis_client
         .get_multiplexed_async_connection()
         .await
         .map_err(|e| AppError::internal(e.to_string()))?;
+    let mut created_checkout_keys = Vec::new();
     for seat_id in &request.seat_ids {
         let key = format!("seat_checkout:{}:{}", request.schedule_id, seat_id);
-        let _: () = redis::cmd("SETEX")
+        let set: Option<String> = redis::cmd("SET")
             .arg(&key)
+            .arg(&checkout_owner)
+            .arg("NX")
+            .arg("EX")
             .arg(300)
-            .arg(1)
             .query_async(&mut redis_conn)
             .await
             .map_err(|e| AppError::internal(e.to_string()))?;
+        if set.is_none() {
+            let current: Option<String> = redis::cmd("GET")
+                .arg(&key)
+                .query_async(&mut redis_conn)
+                .await
+                .map_err(|e| AppError::internal(e.to_string()))?;
+            if current.as_deref() != Some(checkout_owner.as_str()) {
+                for created_key in &created_checkout_keys {
+                    let _: () = redis::cmd("DEL")
+                        .arg(created_key)
+                        .query_async(&mut redis_conn)
+                        .await
+                        .unwrap_or_default();
+                }
+                return Err(AppError::bad_request(
+                    "one or more seats already have a checkout in progress",
+                ));
+            }
+        } else {
+            created_checkout_keys.push(key);
+        }
     }
     let payload = serde_json::json!({
         "payment_request_id": payment_request_id,
@@ -173,25 +197,63 @@ pub async fn request_payment(
         "razorpay_payment_id": request.razorpay_payment_id
     })
     .to_string();
-    channel
-        .basic_publish(
-            "".into(),
-            "payment_processing".into(),
-            BasicPublishOptions::default(),
-            payload.as_bytes(),
-            BasicProperties::default().with_delivery_mode(2),
-        )
-        .await
-        .map_err(|e| AppError::internal(e.to_string()))?
-        .await
-        .map_err(|e| AppError::internal(e.to_string()))?;
-    let _ = sql_query("UPDATE outbox_events SET published_at = NOW(), attempts = attempts + 1 WHERE aggregate_id = CAST($1 AS uuid) AND published_at IS NULL")
-        .bind::<Text,_>(&payment_request_id).execute(&mut conn);
+    let insert_result = match conn.transaction::<_, diesel::result::Error, _>(|conn| {
+        let inserted = sql_query("INSERT INTO payment_requests (id,idempotency_key,user_id,schedule_id,seat_ids,status) VALUES (CAST($1 AS uuid),$2,$3,$4,CAST($5 AS jsonb),CAST('pending' AS payment_request_status)) ON CONFLICT (user_id,idempotency_key) DO NOTHING")
+            .bind::<Text,_>(&payment_request_id)
+            .bind::<Text,_>(&request.idempotency_key)
+            .bind::<Integer,_>(user_id)
+            .bind::<Integer,_>(request.schedule_id)
+            .bind::<Text,_>(&serde_json::to_string(&request.seat_ids).unwrap())
+            .execute(conn)?;
+        if inserted == 1 {
+            sql_query("INSERT INTO outbox_events (id,aggregate_type,aggregate_id,event_type,payload,attempts) VALUES (CAST($1 AS uuid),'payment',CAST($2 AS uuid),'payment.requested',CAST($3 AS jsonb),0)")
+                .bind::<Text,_>(Uuid::new_v4().to_string())
+                .bind::<Text,_>(&payment_request_id)
+                .bind::<Text,_>(&payload)
+                .execute(conn)?;
+        }
+        Ok(inserted)
+    }) {
+        Ok(inserted) => inserted,
+        Err(error) => {
+            for key in &created_checkout_keys {
+                let _: () = redis::cmd("DEL")
+                    .arg(key)
+                    .query_async(&mut redis_conn)
+                    .await
+                    .unwrap_or_default();
+            }
+            return Err(AppError::internal(error.to_string()));
+        }
+    };
+
+    let accepted_id = if insert_result == 1 {
+        payment_request_id
+    } else {
+        let existing = sql_query("SELECT id::text AS id, status::text AS status, schedule_id, seat_ids::text AS seat_ids FROM payment_requests WHERE idempotency_key = $1 AND user_id = $2")
+            .bind::<Text,_>(&request.idempotency_key)
+            .bind::<Integer,_>(user_id)
+            .get_result::<ExistingPaymentRow>(&mut conn)
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        let existing_seats: Vec<i32> = serde_json::from_str(&existing.seat_ids)
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        if !same_payment_intent(
+            existing.schedule_id,
+            &existing_seats,
+            request.schedule_id,
+            &request.seat_ids,
+        ) {
+            return Err(AppError::bad_request(
+                "idempotency_key was already used for a different payment request",
+            ));
+        }
+        existing.id
+    };
     Ok((
         StatusCode::ACCEPTED,
         Json(PaymentAccepted {
-            payment_request_id,
-            status: "pending",
+            payment_request_id: accepted_id,
+            status: "pending".into(),
         }),
     ))
 }
@@ -315,10 +377,33 @@ pub async fn create_razorpay_order(
 }
 
 #[derive(diesel::QueryableByName)]
-struct IdRow {
+struct ExistingPaymentRow {
     #[diesel(sql_type = Text)]
     id: String,
+    #[diesel(sql_type = Text)]
+    status: String,
+    #[diesel(sql_type = Integer)]
+    schedule_id: i32,
+    #[diesel(sql_type = Text)]
+    seat_ids: String,
 }
+
+pub fn same_payment_intent(
+    existing_schedule_id: i32,
+    existing_seats: &[i32],
+    requested_schedule_id: i32,
+    requested_seats: &[i32],
+) -> bool {
+    if existing_schedule_id != requested_schedule_id {
+        return false;
+    }
+    let mut existing = existing_seats.to_vec();
+    let mut requested = requested_seats.to_vec();
+    existing.sort_unstable();
+    requested.sort_unstable();
+    existing == requested
+}
+
 fn authenticated_user(headers: &HeaderMap, secret: &str) -> Result<i32, AppError> {
     let token = headers
         .get("authorization")
@@ -506,12 +591,6 @@ pub async fn cancel_order(
         ));
     }
 
-    // Publish cancellation message to RabbitMQ using existing channel
-    let channel = state
-        .rmq_channel
-        .as_ref()
-        .ok_or_else(|| AppError::internal("RMQ channel not available"))?;
-
     let payload = serde_json::json!({
         "request_type": "cancellation",
         "order_id": order.id.to_string(),
@@ -524,24 +603,24 @@ pub async fn cancel_order(
     })
     .to_string();
 
-    channel
-        .basic_publish(
-            "".into(),
-            "payment_processing".into(),
-            BasicPublishOptions::default(),
-            payload.as_bytes(),
-            BasicProperties::default().with_delivery_mode(2),
+    conn.transaction::<_, diesel::result::Error, _>(|conn| {
+        let updated = diesel::update(
+            orders::table
+                .filter(orders::id.eq(order.id))
+                .filter(orders::status.eq("completed")),
         )
-        .await
-        .map_err(|e| AppError::internal(format!("RMQ basic_publish failed: {}", e)))?
-        .await
-        .map_err(|e| AppError::internal(format!("RMQ publish ack failed: {}", e)))?;
-
-    // Only update order status AFTER RMQ publish succeeds!
-    diesel::update(orders::table.find(order.id))
         .set(orders::status.eq("cancelling"))
-        .execute(&mut conn)
-        .map_err(|e| AppError::internal(format!("Failed to update order status: {}", e)))?;
+        .execute(conn)?;
+        if updated == 1 {
+            sql_query("INSERT INTO outbox_events (id,aggregate_type,aggregate_id,event_type,payload,attempts) VALUES (CAST($1 AS uuid),'payment',CAST($2 AS uuid),'payment.cancellation_requested',CAST($3 AS jsonb),0)")
+                .bind::<Text,_>(Uuid::new_v4().to_string())
+                .bind::<Text,_>(order.id.to_string())
+                .bind::<Text,_>(&payload)
+                .execute(conn)?;
+        }
+        Ok(())
+    })
+    .map_err(|e| AppError::internal(format!("failed to enqueue cancellation: {e}")))?;
 
     Ok((
         StatusCode::ACCEPTED,

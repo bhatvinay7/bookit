@@ -1,6 +1,3 @@
-mod consumer;
-mod payment;
-
 use bookit_db::db::create_db_pool;
 use lapin::types::AMQPValue;
 use lapin::{
@@ -8,6 +5,7 @@ use lapin::{
     options::{BasicConsumeOptions, ExchangeDeclareOptions, QueueBindOptions, QueueDeclareOptions},
     types::FieldTable,
 };
+use payment_processor::consumer;
 use redis_conn::{establish_pool, establish_seat_lock};
 use rmq_conn::connect_with_retry;
 use std::collections::BTreeMap;
@@ -102,7 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .await?;
 
-    consumer::process_messages(consumer, db_pool, channel, seat_lock, redis_pool).await;
+    consumer::process_messages(consumer, db_pool, seat_lock, redis_pool).await;
 
     Ok(())
 }

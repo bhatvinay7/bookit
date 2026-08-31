@@ -12,5 +12,4 @@ pub struct AppState {
     pub jwt_secret: String,
     pub mongo_client: Arc<mongodb::Client>,
     pub mongo_db_name: String,
-    pub rmq_channel: Option<lapin::Channel>,
 }

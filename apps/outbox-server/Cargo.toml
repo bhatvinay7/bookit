@@ -1,0 +1,20 @@
+[package]
+name = "outbox-server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+bookit-db.workspace = true
+bookit-telemetry = { path = "../../packages/telemetry" }
+chrono = "0.4.45"
+diesel = { version = "2.3.11", features = ["postgres", "chrono", "uuid", "serde_json"] }
+diesel_migrations = "2.3.0"
+dotenvy = "0.15"
+lapin = { version = "4.10.0", features = ["rustls"] }
+rmq-conn = { path = "../../packages/rmq-conn" }
+rustls = { version = "0.23", features = ["ring"] }
+serde_json = "1"
+tokio = { version = "1.53.0", features = ["full"] }
+tracing = "0.1"
+uuid = { version = "1.24.0", features = ["v4", "serde"] }

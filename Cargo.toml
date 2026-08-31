@@ -10,6 +10,13 @@ members = [
     "packages/mongo-conn",
     "apps/gateway-keeper",
     "apps/search-server",
-    "apps/lock-server"
-, "packages/telemetry", "apps/cdc-worker", "packages/proto"]
+    "apps/lock-server",
+    "packages/telemetry",
+    "apps/cdc-worker",
+    "apps/outbox-server",
+    "packages/proto",
+]
 resolver = "2"
+
+[workspace.dependencies]
+bookit-db = { path = "packages/db" }
