@@ -30,6 +30,7 @@ flowchart LR
     PAY[Payment processor]:::worker
     NOTIFY[Notification worker]:::worker
     CDC[CDC worker]:::worker
+    OUTBOX[Outbox server]:::worker
 
     PG[(PostgreSQL)]:::data
     MONGO[(MongoDB)]:::data
@@ -66,6 +67,8 @@ flowchart LR
     PAY --> PG
     PAY --> REDIS
     PAY --> EXT
+    PG --> OUTBOX
+    OUTBOX --> RMQ
     NOTIFY --> PG
     NOTIFY --> API
     NOTIFY --> EXT
@@ -88,9 +91,10 @@ runtime request path.
 | `gateway-keeper` | HTTP `8080`, gRPC `50052` | Edge routing, seat coordination, circuit breaking and gRPC locking | Redis, RabbitMQ, HTTP API, search | 1–5 pods, CPU target 75% |
 | `http-server` | HTTP `8082` | Authentication, admin APIs, schedules, booking, tickets, uploads and payments | PostgreSQL, MongoDB, Redis, RabbitMQ, R2 | 1–5 pods, CPU target 75% |
 | `ws-server` | WebSocket `8081` | Client sessions and real-time seat-event fan-out | Redis Pub/Sub, gateway gRPC | 1–5 pods, CPU target 75% |
-| `search-server` | HTTP health `8084`, gRPC `50051` | Search API and Elasticsearch synchronization | Elasticsearch, MongoDB, PostgreSQL, Redis Stream | 1–5 pods, CPU target 75% |
+| `search-server` | HTTP health `8084`, gRPC `50051` | Search API (hybrid fuzzy + phonetic) and Elasticsearch synchronization | Elasticsearch, MongoDB, PostgreSQL, Redis Stream | 1–5 pods, CPU target 75% |
 | `lock-server` | RabbitMQ consumer | Serializes seat state per show and reconciles expired locks | RabbitMQ, Redis, PostgreSQL | 1–5 pods, CPU target 75%; 10 tasks/pod by default |
-| `payment-processor` | RabbitMQ consumer | Completes/cancels orders, records audit/outbox events and publishes booking events | RabbitMQ, PostgreSQL, Redis, Razorpay | 1–5 pods, CPU target 75%; one consumer loop/pod |
+| `payment-processor` | RabbitMQ consumer | Completes/cancels orders and records audit/outbox events | RabbitMQ, PostgreSQL, Redis, Razorpay | 1–5 pods, CPU target 75%; one consumer loop/pod |
+| `outbox-server` | PostgreSQL consumer | Reliably publishes transactional outbox events to RabbitMQ | PostgreSQL, RabbitMQ | 1 pod active |
 | `notification-worker` | RabbitMQ consumer | Creates ticket records/PDF requests and sends booking email | RabbitMQ, PostgreSQL, HTTP API, Gmail/SMTP | 1–5 pods, CPU target 75%; one consumer loop/pod |
 | `cdc-worker` | Mongo change stream + Redis Stream | Moves show changes from MongoDB into the search update stream | MongoDB, Redis | Source exists; no active base Kubernetes workload yet |
 
@@ -185,6 +189,7 @@ sequenceDiagram
     participant RMQ as RabbitMQ
     participant Pay as Payment processor
     participant PG as PostgreSQL
+    participant Outbox as Outbox server
     participant Notify as Notification worker
     participant Mail as Email provider
 
@@ -192,12 +197,13 @@ sequenceDiagram
     API->>RMQ: Persistent payment command
     RMQ->>Pay: At-least-once delivery
     Pay->>PG: Transaction: seats + order + audit + outbox
-    Pay->>RMQ: Booking/cancellation event
+    Pay-->>RMQ: ACK only after processing
+    PG-->>Outbox: Polled for new outbox events
+    Outbox->>RMQ: Booking/cancellation event
     RMQ->>Notify: Fan-out event
     Notify->>PG: Idempotency check and ticket write
     Notify->>API: Generate ticket PDF
     Notify->>Mail: Send confirmation/cancellation
-    Pay-->>RMQ: ACK only after processing
     Notify-->>RMQ: ACK only after processing
 ```
 
@@ -572,6 +578,7 @@ apps/
   search-server/        search API and index synchronization
   lock-server/          seat-lock queue worker
   payment-processor/    booking/payment queue worker
+  outbox-server/        reliable transactional outbox publisher
   notification-worker/ ticket/email queue worker
   cdc-worker/           MongoDB-to-Redis change stream
   web/                  Next.js frontend
