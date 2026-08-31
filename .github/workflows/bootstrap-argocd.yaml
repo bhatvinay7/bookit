@@ -2,7 +2,7 @@ name: Bootstrap ArgoCD
 
 on:
   push:
-    branches: [development, main]
+    branches: [deployment1, main]
     paths:
       - ".github/workflows/bootstrap-argocd.yaml"
   workflow_dispatch:
@@ -12,7 +12,7 @@ on:
         required: true
         type: choice
         options:
-          - development
+          - deployment1
           - production
       confirm_production:
         description: Type PROMOTE-PRODUCTION when targeting production
@@ -20,7 +20,7 @@ on:
         type: string
 
 concurrency:
-  group: bootstrap-argocd-${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}
+  group: bootstrap-argocd-${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'deployment1') }}
   cancel-in-progress: false
 
 env:
@@ -30,14 +30,14 @@ jobs:
   bootstrap-argocd:
     name: Bootstrap ArgoCD on Cluster
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}
+    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'deployment1') }}
     steps:
       - name: Validate environment and source branch
         env:
-          TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}
+          TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'deployment1') }}
           CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
         run: |
-          expected_branch="development"
+          expected_branch="deployment1"
           if [ "$TARGET_ENVIRONMENT" = "production" ]; then
             expected_branch="main"
             if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "$CONFIRM_PRODUCTION" != "PROMOTE-PRODUCTION" ]; then
@@ -90,7 +90,7 @@ jobs:
             exit 1
           fi
 
-          echo "Selected environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}"
+          echo "Selected environment: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'deployment1') }}"
           echo "Kubeconfig context:   $actual_context"
           echo "Cluster name:         $actual_cluster"
           echo "API server:           $actual_server"
@@ -100,7 +100,7 @@ jobs:
         env:
           ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
           GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL || secrets.GATEWAY_KEEPER_GRPC_URL }}
-          TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'development') }}
+          TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'deployment1') }}
         run: |
           if kubectl get deployment argocd-server -n argocd >/dev/null 2>&1; then
             echo "ArgoCD is already installed. Skipping installation."
@@ -243,7 +243,7 @@ jobs:
             kubectl apply -f argocd/stateful-applicationset.yaml
             kubectl apply -f argocd/argocd-ingress.yaml
           else
-            echo "Bootstrapping development applications from dev."
+            echo "Bootstrapping deployment1 applications from deployment1."
             kubectl apply -f argocd/dev-apps.yaml
             kubectl apply -f argocd/stateful-applicationset.yaml
             kubectl apply -f argocd/argocd-ingress.yaml
