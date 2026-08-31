@@ -370,7 +370,7 @@ jobs:
           CLOUDINARY_API_KEY: ${{ secrets.CLOUDINARY_API_KEY }}
           CLOUDINARY_API_SECRET: ${{ secrets.CLOUDINARY_API_SECRET }}
           GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL || secrets.GATEWAY_KEEPER_GRPC_URL }}
-          GATEWAY_KEEPER_GRPC_URL: ${{ secrets.GATEWAY_KEEPER_GRPC_URL }}
+          GATEWAY_KEEPER_GRPC_URL: ${{ secrets.GATEWAY_KEEPER_GRPC_URL || secrets.GRPC_SERVER_URL }}
           HTTP_SERVER_URL: ${{ secrets.HTTP_SERVER_URL }}
           SEARCH_SERVER_GRPC_URL: ${{ secrets.SEARCH_SERVER_GRPC_URL }}
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
