@@ -20,6 +20,13 @@ pub async fn init_es_index(client: &HttpClient, es_url: &str) {
     let settings = json!({
         "settings": {
             "analysis": {
+                "filter": {
+                    "phonetic_filter": {
+                        "type": "phonetic",
+                        "encoder": "double_metaphone",
+                        "replace": false
+                    }
+                },
                 "analyzer": {
                     "autocomplete": {
                         "tokenizer": "autocomplete",
@@ -27,6 +34,10 @@ pub async fn init_es_index(client: &HttpClient, es_url: &str) {
                     },
                     "autocomplete_search": {
                         "tokenizer": "lowercase"
+                    },
+                    "phonetic_analyzer": {
+                        "tokenizer": "standard",
+                        "filter": ["lowercase", "phonetic_filter"]
                     }
                 },
                 "tokenizer": {
@@ -44,7 +55,13 @@ pub async fn init_es_index(client: &HttpClient, es_url: &str) {
                 "title": {
                     "type": "text",
                     "analyzer": "autocomplete",
-                    "search_analyzer": "autocomplete_search"
+                    "search_analyzer": "autocomplete_search",
+                    "fields": {
+                        "phonetic": {
+                            "type": "text",
+                            "analyzer": "phonetic_analyzer"
+                        }
+                    }
                 },
                 "description": { "type": "text" },
                 "venue": { "type": "text" },
