@@ -111,6 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gateway = GatewayState::new(redis_pool.clone(), single_node_lock, rmq_channel);
     gateway.start_expiry_worker();
     gateway.start_pubsub_listener();
+    gateway.start_actor_cleanup_worker();
 
     let grpc_addr: SocketAddr = std::env::var("GATEWAY_KEEPER_GRPC_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:50052".to_string())
