@@ -116,3 +116,14 @@ pub fn room_channel(schedule_id: i32) -> String {
 pub fn global_events_channel() -> String {
     "ws:global:events".to_string()
 }
+
+/// Fan-out channel used to notify every gateway replica of schedule lifecycle
+/// transitions.
+pub fn schedule_lifecycle_channel() -> &'static str {
+    "schedule:lifecycle"
+}
+
+/// Durable marker checked when a gateway has no local actor for a schedule.
+pub fn schedule_closed_key(schedule_id: i32) -> String {
+    format!("schedule:closed:{schedule_id}")
+}
