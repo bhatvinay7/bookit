@@ -41,6 +41,12 @@ pub enum PubSubEvent {
         showtime_id: i32,
         seat_ids: Vec<i32>,
     },
+    ScheduleOpened {
+        schedule_id: i32,
+    },
+    ScheduleClosed {
+        schedule_id: i32,
+    },
 }
 
 #[derive(Clone)]
