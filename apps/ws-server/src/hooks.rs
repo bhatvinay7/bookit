@@ -1,5 +1,12 @@
 use crate::grpc_client::GrpcLockClient;
 use crate::locking::{confirm_payment, sync_locks_from_zset, sync_room_state_snapshot};
+use bookit_db::{
+    db::DbPool,
+    models::Schedule,
+    schema::{schedule_seats, schedules},
+};
+use dashmap::{DashMap, mapref::entry::Entry};
+use diesel::prelude::*;
 use redis::AsyncCommands;
 use redis_conn::{
     RedisPool, SeatLock,
@@ -7,35 +14,151 @@ use redis_conn::{
     keys,
 };
 use serde_json::json;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 use tracing::{error, info};
 
 pub struct WsHooks {
     pub adapter: RedisSocketAdapter,
     pub redis_pool: RedisPool,
+    pub db_pool: DbPool,
     pub grpc_client: GrpcLockClient,
     pub single_node_lock: Arc<dyn SeatLock>,
+    schedule_metadata: DashMap<i32, Arc<tokio::sync::OnceCell<Arc<ScheduleSeatMetadata>>>>,
+}
+
+struct ScheduleSeatMetadata {
+    total_seat_count: i32,
+    seat_indices: HashMap<i32, i32>,
 }
 
 impl WsHooks {
     pub fn new(
         adapter: RedisSocketAdapter,
         redis_pool: RedisPool,
+        db_pool: DbPool,
         grpc_client: GrpcLockClient,
         single_node_lock: Arc<dyn SeatLock>,
     ) -> Self {
         Self {
             adapter,
             redis_pool,
+            db_pool,
             grpc_client,
             single_node_lock,
+            schedule_metadata: DashMap::new(),
         }
     }
 
-    pub async fn on_lock_request(&self, user_id: i32, showtime_id: i32, seat_ids: Vec<i32>) {
+    async fn verified_seat_metadata(
+        &self,
+        schedule_id: i32,
+        seat_ids: &[i32],
+        seat_indices: &[i32],
+        total_seat_count: i32,
+    ) -> Result<(Vec<i32>, i32), String> {
+        if seat_ids.is_empty() || seat_ids.len() != seat_indices.len() {
+            return Err("seat ids and indices must be non-empty and aligned".into());
+        }
+
+        // A per-schedule OnceCell provides async single-flight initialization:
+        // a burst of first requests waits on one database load instead of
+        // producing a thundering herd of identical queries.
+        let metadata_cell = if let Some(cell) = self.schedule_metadata.get(&schedule_id) {
+            Arc::clone(cell.value())
+        } else {
+            let new_cell = Arc::new(tokio::sync::OnceCell::new());
+            match self.schedule_metadata.entry(schedule_id) {
+                Entry::Occupied(entry) => Arc::clone(entry.get()),
+                Entry::Vacant(entry) => {
+                    entry.insert(Arc::clone(&new_cell));
+                    new_cell
+                }
+            }
+        };
+        let pool = self.db_pool.clone();
+        let metadata = metadata_cell
+            .get_or_try_init(|| async move {
+                tokio::task::spawn_blocking(move || {
+                    let mut conn = pool
+                        .get()
+                        .map_err(|error| format!("database pool unavailable: {error}"))?;
+                    let schedule = schedules::table
+                        .find(schedule_id)
+                        .filter(schedules::deleted_at.is_null())
+                        .first::<Schedule>(&mut conn)
+                        .map_err(|_| "schedule not found".to_string())?;
+                    if schedule.booking_open_at > chrono::Utc::now() {
+                        return Err("schedule is not open for booking".to_string());
+                    }
+                    let rows = schedule_seats::table
+                        .filter(schedule_seats::schedule_id.eq(schedule_id))
+                        .select((schedule_seats::id, schedule_seats::seat_index))
+                        .load::<(i32, i32)>(&mut conn)
+                        .map_err(|error| format!("unable to load schedule seats: {error}"))?;
+                    let total_seat_count = i32::try_from(rows.len())
+                        .map_err(|_| "schedule contains too many seats".to_string())?;
+                    if total_seat_count == 0 {
+                        return Err("schedule has no seats".to_string());
+                    }
+                    Ok::<_, String>(Arc::new(ScheduleSeatMetadata {
+                        total_seat_count,
+                        seat_indices: rows.into_iter().collect(),
+                    }))
+                })
+                .await
+                .map_err(|error| format!("seat metadata task failed: {error}"))?
+            })
+            .await
+            .map(Arc::clone)?;
+
+        if total_seat_count != metadata.total_seat_count {
+            return Err("total seat count does not match the schedule".into());
+        }
+        for (&seat_id, &seat_index) in seat_ids.iter().zip(seat_indices) {
+            if metadata.seat_indices.get(&seat_id) != Some(&seat_index) {
+                return Err(format!("seat {seat_id} has an invalid schedule seat index"));
+            }
+        }
+        Ok((seat_indices.to_vec(), metadata.total_seat_count))
+    }
+
+    pub async fn on_lock_request(
+        &self,
+        user_id: i32,
+        showtime_id: i32,
+        seat_ids: Vec<i32>,
+        seat_indices: Vec<i32>,
+        total_seat_count: i32,
+    ) {
+        let verified = self
+            .verified_seat_metadata(showtime_id, &seat_ids, &seat_indices, total_seat_count)
+            .await;
+        let (seat_indices, total_seat_count) = match verified {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                error!(showtime_id, %error, "invalid lock seat metadata");
+                let response_payload = json!({
+                    "event": "lock_slots_response",
+                    "showtime_id": showtime_id,
+                    "success": false,
+                    "message": error,
+                    "locked_seat_ids": [],
+                    "failed_seat_ids": seat_ids,
+                });
+                self.adapter
+                    .send_to_user_local(user_id, &response_payload.to_string());
+                return;
+            }
+        };
         if let Err(err) = self
             .grpc_client
-            .lock_slot(showtime_id, seat_ids.clone(), user_id)
+            .lock_slot(
+                showtime_id,
+                seat_ids.clone(),
+                seat_indices,
+                total_seat_count,
+                user_id,
+            )
             .await
         {
             error!(?err, "gateway keeper rejected lock request");
@@ -51,10 +174,42 @@ impl WsHooks {
         }
     }
 
-    pub async fn on_unlock_request(&self, user_id: i32, showtime_id: i32, seat_ids: Vec<i32>) {
+    pub async fn on_unlock_request(
+        &self,
+        user_id: i32,
+        showtime_id: i32,
+        seat_ids: Vec<i32>,
+        seat_indices: Vec<i32>,
+        total_seat_count: i32,
+    ) {
+        let verified = self
+            .verified_seat_metadata(showtime_id, &seat_ids, &seat_indices, total_seat_count)
+            .await;
+        let (seat_indices, total_seat_count) = match verified {
+            Ok(metadata) => metadata,
+            Err(error) => {
+                error!(showtime_id, %error, "invalid unlock seat metadata");
+                let response_payload = json!({
+                    "event": "unlock_slots_response",
+                    "showtime_id": showtime_id,
+                    "success": false,
+                    "message": error,
+                    "unlocked_seat_ids": [],
+                });
+                self.adapter
+                    .send_to_user_local(user_id, &response_payload.to_string());
+                return;
+            }
+        };
         let response_payload = match self
             .grpc_client
-            .unlock_slot(showtime_id, seat_ids, user_id)
+            .unlock_slot(
+                showtime_id,
+                seat_ids,
+                seat_indices,
+                total_seat_count,
+                user_id,
+            )
             .await
         {
             Ok((success, _, unlocked_seat_ids)) => json!({

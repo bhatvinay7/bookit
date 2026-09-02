@@ -10,6 +10,7 @@ export type ScheduleSeatStatus = 'Available' | 'Locked' | 'Booked';
 export interface ScheduleSeat {
   id: number;
   schedule_id: number;
+  seat_index: number;
   layout_seat_id?: number | null;
   source: SeatSource;
   row_letter: string;

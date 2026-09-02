@@ -57,7 +57,7 @@ export default function BookingWorkspacePage() {
     bookedSeatIds,
     externallyLockedSeats,
     clearExternallyLockedSeat,
-  } = useSeatLocking(scheduleId ?? 0, () => {
+  } = useSeatLocking(scheduleId ?? 0, seats, () => {
     setSuccessToast(true);
     setTimeout(() => setSuccessToast(false), 3000);
   });

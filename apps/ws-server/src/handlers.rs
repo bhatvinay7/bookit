@@ -20,11 +20,15 @@ pub enum WsRequest {
         #[serde(alias = "showtime_id")]
         room_id: i32,
         seat_ids: Vec<i32>,
+        seat_indices: Vec<i32>,
+        total_seat_count: i32,
     },
     UnlockSeats {
         #[serde(alias = "showtime_id")]
         room_id: i32,
         seat_ids: Vec<i32>,
+        seat_indices: Vec<i32>,
+        total_seat_count: i32,
     },
     SyncLocks {
         #[serde(alias = "showtime_id")]
@@ -83,16 +87,38 @@ pub async fn handle_socket(
                             .on_unsubscribe(&socket_id_clone, room_id)
                             .await;
                     }
-                    WsRequest::LockSeats { room_id, seat_ids } => {
+                    WsRequest::LockSeats {
+                        room_id,
+                        seat_ids,
+                        seat_indices,
+                        total_seat_count,
+                    } => {
                         state_clone
                             .hooks
-                            .on_lock_request(user_id, room_id, seat_ids)
+                            .on_lock_request(
+                                user_id,
+                                room_id,
+                                seat_ids,
+                                seat_indices,
+                                total_seat_count,
+                            )
                             .await;
                     }
-                    WsRequest::UnlockSeats { room_id, seat_ids } => {
+                    WsRequest::UnlockSeats {
+                        room_id,
+                        seat_ids,
+                        seat_indices,
+                        total_seat_count,
+                    } => {
                         state_clone
                             .hooks
-                            .on_unlock_request(user_id, room_id, seat_ids)
+                            .on_unlock_request(
+                                user_id,
+                                room_id,
+                                seat_ids,
+                                seat_indices,
+                                total_seat_count,
+                            )
                             .await;
                     }
                     WsRequest::SyncLocks { room_id } => {

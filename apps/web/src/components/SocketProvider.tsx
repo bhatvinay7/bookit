@@ -8,8 +8,8 @@ interface SocketContextType {
   isConnected: boolean;
   subscribe: (showtimeId: number) => void;
   unsubscribe: (showtimeId: number) => void;
-  lockSeats: (showtimeId: number, seatIds: number[]) => boolean;
-  unlockSeats: (showtimeId: number, seatIds: number[]) => void;
+  lockSeats: (showtimeId: number, seatIds: number[], seatIndices: number[], totalSeatCount: number) => boolean;
+  unlockSeats: (showtimeId: number, seatIds: number[], seatIndices: number[], totalSeatCount: number) => void;
   syncLocks: (showtimeId: number) => void;
   lastMessage: unknown;
   tokenExpired: boolean;
@@ -128,17 +128,29 @@ export function SocketProvider({ children }: { children: React.ReactNode }) {
     }
   }, [socket]);
 
-  const lockSeats = useCallback((showtimeId: number, seatIds: number[]) => {
+  const lockSeats = useCallback((showtimeId: number, seatIds: number[], seatIndices: number[], totalSeatCount: number) => {
     if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "LockSeats", room_id: showtimeId, seat_ids: seatIds }));
+      socket.send(JSON.stringify({
+        type: "LockSeats",
+        room_id: showtimeId,
+        seat_ids: seatIds,
+        seat_indices: seatIndices,
+        total_seat_count: totalSeatCount,
+      }));
       return true;
     }
     return false;
   }, [socket]);
 
-  const unlockSeats = useCallback((showtimeId: number, seatIds: number[]) => {
+  const unlockSeats = useCallback((showtimeId: number, seatIds: number[], seatIndices: number[], totalSeatCount: number) => {
     if (socket?.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({ type: "UnlockSeats", room_id: showtimeId, seat_ids: seatIds }));
+      socket.send(JSON.stringify({
+        type: "UnlockSeats",
+        room_id: showtimeId,
+        seat_ids: seatIds,
+        seat_indices: seatIndices,
+        total_seat_count: totalSeatCount,
+      }));
     }
   }, [socket]);
 
