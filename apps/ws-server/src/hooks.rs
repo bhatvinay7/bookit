@@ -2,7 +2,7 @@ use crate::grpc_client::GrpcLockClient;
 use crate::locking::{confirm_payment, sync_locks_from_zset, sync_room_state_snapshot};
 use bookit_db::{
     db::DbPool,
-    models::Schedule,
+    models::{Schedule, ScheduleLifecycleState},
     schema::{schedule_seats, schedules},
 };
 use dashmap::{DashMap, mapref::entry::Entry};
@@ -87,7 +87,7 @@ impl WsHooks {
                         .filter(schedules::deleted_at.is_null())
                         .first::<Schedule>(&mut conn)
                         .map_err(|_| "schedule not found".to_string())?;
-                    if schedule.booking_open_at > chrono::Utc::now() {
+                    if schedule.lifecycle_state != ScheduleLifecycleState::Open {
                         return Err("schedule is not open for booking".to_string());
                     }
                     let rows = schedule_seats::table
