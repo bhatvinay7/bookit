@@ -2,9 +2,9 @@ use std::{
     panic::AssertUnwindSafe,
     sync::{
         Arc,
-        atomic::{AtomicI32, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use dashmap::{DashMap, mapref::entry::Entry};
@@ -19,6 +19,8 @@ const STATE_AVAILABLE: u8 = 0;
 const STATE_PROCESSING: u8 = 1;
 const SHOW_QUEUE_CAPACITY: usize = 5;
 const MAX_SEATS_PER_SHOW: usize = 200_000;
+const ACTOR_IDLE_TTL: Duration = Duration::from_secs(2 * 60 * 60);
+const ACTOR_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 const ACTOR_RESTART_DELAY: Duration = Duration::from_millis(500);
 
 type ShowKey = i32;
@@ -36,6 +38,27 @@ struct CachePaddedShowActor {
     sender: mpsc::Sender<GatewayTask>,
     seat_states: ShowSeatStates,
     seat_indices: DashMap<i32, usize>,
+    last_access: AtomicU64,
+    in_flight: AtomicUsize,
+    closing: AtomicBool,
+}
+
+struct ActorRequestLease {
+    actor: Arc<CachePaddedShowActor>,
+}
+
+impl Drop for ActorRequestLease {
+    fn drop(&mut self) {
+        self.actor.last_access.store(unix_now(), Ordering::Release);
+        self.actor.in_flight.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 impl CachePaddedShowActor {
@@ -52,7 +75,43 @@ impl CachePaddedShowActor {
             sender,
             seat_states: seats.into_boxed_slice(),
             seat_indices: DashMap::new(),
+            last_access: AtomicU64::new(unix_now()),
+            in_flight: AtomicUsize::new(0),
+            closing: AtomicBool::new(false),
         })
+    }
+
+    fn begin_request(self: &Arc<Self>) -> Result<ActorRequestLease, String> {
+        if self.closing.load(Ordering::Acquire) {
+            return Err("show actor is closing".into());
+        }
+        self.in_flight.fetch_add(1, Ordering::AcqRel);
+        if self.closing.load(Ordering::Acquire) {
+            self.in_flight.fetch_sub(1, Ordering::AcqRel);
+            return Err("show actor is closing".into());
+        }
+        self.last_access.store(unix_now(), Ordering::Release);
+        Ok(ActorRequestLease {
+            actor: Arc::clone(self),
+        })
+    }
+
+    fn try_begin_idle_eviction(&self, now: u64) -> bool {
+        let idle_for = now.saturating_sub(self.last_access.load(Ordering::Acquire));
+        if idle_for < ACTOR_IDLE_TTL.as_secs()
+            || self
+                .closing
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return false;
+        }
+        if self.in_flight.load(Ordering::Acquire) == 0 {
+            true
+        } else {
+            self.closing.store(false, Ordering::Release);
+            false
+        }
     }
 
     fn validate_seat_count(&self, seat_count: usize) -> Result<(), String> {
@@ -194,6 +253,7 @@ impl GatewayState {
         let actor = self
             .get_or_create_show_actor(showtime_id, total_seat_count)
             .await?;
+        let _request_lease = actor.begin_request()?;
         let seats = seat_ids
             .into_iter()
             .zip(seat_indices)
@@ -260,6 +320,7 @@ impl GatewayState {
         let actor = self
             .get_or_create_show_actor(showtime_id, total_seat_count)
             .await?;
+        let _request_lease = actor.begin_request()?;
         for (&seat_id, &seat_index) in seat_ids.iter().zip(&seat_indices) {
             actor.register_seat(seat_id, seat_index)?;
         }
@@ -510,6 +571,36 @@ impl GatewayState {
                 tokio::time::sleep(ACTOR_RESTART_DELAY).await;
             }
         });
+    }
+
+    pub fn start_actor_cleanup_worker(&self) {
+        let state = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(ACTOR_CLEANUP_INTERVAL);
+            loop {
+                interval.tick().await;
+                state.evict_idle_actors(unix_now());
+            }
+        });
+    }
+
+    fn evict_idle_actors(&self, now: u64) {
+        let actors = self
+            .show_actors
+            .iter()
+            .map(|entry| (*entry.key(), Arc::clone(entry.value())))
+            .collect::<Vec<_>>();
+        for (key, cell) in actors {
+            let Some(actor) = cell.get() else {
+                continue;
+            };
+            if !actor.try_begin_idle_eviction(now) {
+                continue;
+            }
+            self.show_actors
+                .remove_if(&key, |_, current| Arc::ptr_eq(current, &cell));
+            info!(showtime_id = key, "evicted idle show actor");
+        }
     }
 
     async fn run_expiry_loop(&self) {
