@@ -14,6 +14,10 @@ pub mod sql_types {
     pub struct PaymentRequestStatus;
 
     #[derive(diesel::query_builder::QueryId, diesel::sql_types::SqlType)]
+    #[diesel(postgres_type(name = "schedule_lifecycle_state"))]
+    pub struct ScheduleLifecycleState;
+
+    #[derive(diesel::query_builder::QueryId, diesel::sql_types::SqlType)]
     #[diesel(postgres_type(name = "seat_source"))]
     pub struct SeatSource;
 
@@ -129,7 +133,7 @@ diesel::table! {
 
 diesel::table! {
     use diesel::sql_types::*;
-    use super::sql_types::{ShowType, TimeSlot};
+    use super::sql_types::{ScheduleLifecycleState, ShowType, TimeSlot};
 
     schedules (id) {
         id -> Int4,
@@ -139,6 +143,7 @@ diesel::table! {
         layout_id -> Nullable<Int4>,
         start_time -> Timestamptz,
         booking_open_at -> Timestamptz,
+        lifecycle_state -> ScheduleLifecycleState,
         created_at -> Timestamptz,
         deleted_at -> Nullable<Timestamptz>,
         #[max_length = 255]

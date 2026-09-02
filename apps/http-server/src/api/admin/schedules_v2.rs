@@ -7,6 +7,7 @@ use axum::{
 use bigdecimal::BigDecimal;
 use chrono::Utc;
 use diesel::prelude::*;
+use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 use std::sync::Arc;
@@ -16,7 +17,10 @@ use crate::helpers::errors::AppError;
 use crate::services::cache::invalidate_async;
 use bookit_db::{
     insertables::{NewSchedule, NewScheduleSeat},
-    models::{LayoutSeatClass, Schedule, ScheduleSeat, SeatLayoutSeat, SeatSource, ShowType},
+    models::{
+        LayoutSeatClass, Schedule, ScheduleLifecycleState, ScheduleSeat, SeatLayoutSeat,
+        SeatSource, ShowType,
+    },
     schema::{schedule_seats, schedules, seat_layout_seats},
 };
 use bookit_mongo::models::{Show, ShowType as MongoShowType};
@@ -212,13 +216,14 @@ pub async fn list_schedules(
                 "start_time":                  s.start_time,
                 "end_time":                    s.end_time,
                 "booking_open_at":             s.booking_open_at,
+                "lifecycle_state":             s.lifecycle_state,
                 "created_at":                  s.created_at,
                 "deleted_at":                  s.deleted_at,
                 "total_seats":                 total,
                 "available_seats":             available,
                 "booked_seats":                total - available,
                 "seconds_until_booking_open":  seconds_until_booking_open,
-                "booking_open":                seconds_until_booking_open <= 0,
+                "booking_open":                s.lifecycle_state == ScheduleLifecycleState::Open,
                 "venue_name":                  s.venue_name,
                 "venue_address":               s.venue_address,
                 "venue_city":                  s.venue_city,
@@ -391,6 +396,7 @@ pub async fn create_schedule(
         Json(serde_json::json!({
             "id":          schedule.id,
             "start_time":  schedule.start_time,
+            "lifecycle_state": schedule.lifecycle_state,
             "seats_copied": new_seats.len(),
         })),
     ))
@@ -427,9 +433,9 @@ pub async fn add_extra_seats(
 
         // A gateway actor uses a fixed-size array. Once booking is open its
         // seat count must remain immutable.
-        if schedule.booking_open_at <= Utc::now() {
+        if schedule.lifecycle_state != ScheduleLifecycleState::Scheduled {
             return Err(AppError::bad_request(
-                "Cannot add seats after booking has opened",
+                "Cannot add seats after the schedule has started",
             ));
         }
 
@@ -576,6 +582,131 @@ pub async fn get_schedule_seats(
 
 // ─── Cancel schedule (soft delete) ───────────────────────────────────────────
 
+async fn publish_schedule_lifecycle(
+    state: &Arc<AppState>,
+    event: bookit_redis::adapter::PubSubEvent,
+) -> Result<(), AppError> {
+    let (schedule_id, closed) = match &event {
+        bookit_redis::adapter::PubSubEvent::ScheduleOpened { schedule_id } => (*schedule_id, false),
+        bookit_redis::adapter::PubSubEvent::ScheduleClosed { schedule_id } => (*schedule_id, true),
+        _ => return Err(AppError::internal("Invalid schedule lifecycle event")),
+    };
+    let mut redis = state.redis_manager.clone();
+    let closed_key = bookit_redis::keys::schedule_closed_key(schedule_id);
+    if closed {
+        let _: () = redis
+            .set(&closed_key, 1)
+            .await
+            .map_err(|error| AppError::internal(error.to_string()))?;
+    } else {
+        let _: () = redis
+            .del(&closed_key)
+            .await
+            .map_err(|error| AppError::internal(error.to_string()))?;
+    }
+    let payload =
+        serde_json::to_string(&event).map_err(|error| AppError::internal(error.to_string()))?;
+    let _: () = redis
+        .publish(bookit_redis::keys::schedule_lifecycle_channel(), payload)
+        .await
+        .map_err(|error| AppError::internal(error.to_string()))?;
+    Ok(())
+}
+
+async fn invalidate_schedule_lifecycle_caches(state: &Arc<AppState>, schedule: &Schedule) {
+    invalidate_async(state, &cache_schedule_key(schedule.id)).await;
+    invalidate_show_schedule_caches(state, schedule).await;
+}
+
+pub async fn start_schedule(
+    State(state): State<Arc<AppState>>,
+    Path(schedule_id): Path<i32>,
+) -> Result<impl IntoResponse, AppError> {
+    let schedule = {
+        let mut conn = state
+            .db_pool
+            .get()
+            .map_err(|error| AppError::internal(error.to_string()))?;
+        conn.transaction::<Schedule, AppError, _>(|conn| {
+            let current = schedules::table
+                .find(schedule_id)
+                .filter(schedules::deleted_at.is_null())
+                .for_update()
+                .first::<Schedule>(conn)
+                .map_err(|error| match error {
+                    diesel::result::Error::NotFound => AppError::not_found("Schedule not found"),
+                    error => AppError::from(error),
+                })?;
+            if current.lifecycle_state == ScheduleLifecycleState::Closed {
+                return Err(AppError::bad_request(
+                    "A closed schedule cannot be restarted",
+                ));
+            }
+            if current.lifecycle_state == ScheduleLifecycleState::Open {
+                Ok(current)
+            } else {
+                diesel::update(schedules::table.find(schedule_id))
+                    .set(schedules::lifecycle_state.eq(ScheduleLifecycleState::Open))
+                    .get_result::<Schedule>(conn)
+                    .map_err(AppError::from)
+            }
+        })?
+    };
+
+    publish_schedule_lifecycle(
+        &state,
+        bookit_redis::adapter::PubSubEvent::ScheduleOpened { schedule_id },
+    )
+    .await?;
+    invalidate_schedule_lifecycle_caches(&state, &schedule).await;
+    Ok(Json(serde_json::json!({
+        "schedule_id": schedule_id,
+        "lifecycle_state": "open"
+    })))
+}
+
+pub async fn close_schedule(
+    State(state): State<Arc<AppState>>,
+    Path(schedule_id): Path<i32>,
+) -> Result<impl IntoResponse, AppError> {
+    let schedule = {
+        let mut conn = state
+            .db_pool
+            .get()
+            .map_err(|error| AppError::internal(error.to_string()))?;
+        conn.transaction::<Schedule, AppError, _>(|conn| {
+            let current = schedules::table
+                .find(schedule_id)
+                .filter(schedules::deleted_at.is_null())
+                .for_update()
+                .first::<Schedule>(conn)
+                .map_err(|error| match error {
+                    diesel::result::Error::NotFound => AppError::not_found("Schedule not found"),
+                    error => AppError::from(error),
+                })?;
+            if current.lifecycle_state == ScheduleLifecycleState::Closed {
+                Ok(current)
+            } else {
+                diesel::update(schedules::table.find(schedule_id))
+                    .set(schedules::lifecycle_state.eq(ScheduleLifecycleState::Closed))
+                    .get_result::<Schedule>(conn)
+                    .map_err(AppError::from)
+            }
+        })?
+    };
+
+    publish_schedule_lifecycle(
+        &state,
+        bookit_redis::adapter::PubSubEvent::ScheduleClosed { schedule_id },
+    )
+    .await?;
+    invalidate_schedule_lifecycle_caches(&state, &schedule).await;
+    Ok(Json(serde_json::json!({
+        "schedule_id": schedule_id,
+        "lifecycle_state": "closed"
+    })))
+}
+
 pub async fn delete_schedule(
     State(state): State<Arc<AppState>>,
     Path(schedule_id): Path<i32>,
@@ -592,12 +723,19 @@ pub async fn delete_schedule(
         .map_err(|_| AppError::not_found("Schedule not found"))?;
 
     diesel::update(schedules::table.find(schedule_id))
-        .set(schedules::deleted_at.eq(Some(Utc::now())))
+        .set((
+            schedules::deleted_at.eq(Some(Utc::now())),
+            schedules::lifecycle_state.eq(ScheduleLifecycleState::Closed),
+        ))
         .execute(&mut conn)
         .map_err(|e| AppError::internal(e.to_string()))?;
 
-    invalidate_async(&state, &cache_schedule_key(schedule_id)).await;
-    invalidate_show_schedule_caches(&state, &schedule).await;
+    publish_schedule_lifecycle(
+        &state,
+        bookit_redis::adapter::PubSubEvent::ScheduleClosed { schedule_id },
+    )
+    .await?;
+    invalidate_schedule_lifecycle_caches(&state, &schedule).await;
 
     Ok(Json(serde_json::json!({ "cancelled": true })))
 }
