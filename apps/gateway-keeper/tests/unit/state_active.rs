@@ -52,3 +52,31 @@ fn concurrent_herd_has_only_one_winner_for_a_seat() {
         .count();
     assert_eq!(winners, 1);
 }
+
+#[test]
+fn idle_eviction_waits_for_in_flight_requests() {
+    let (sender, _receiver) = mpsc::channel(1);
+    let actor = Arc::new(CachePaddedShowActor::new(sender, 1).unwrap());
+    let now = unix_now();
+    actor.last_access.store(
+        now.saturating_sub(ACTOR_IDLE_TTL.as_secs() + 1),
+        Ordering::Release,
+    );
+
+    let request = actor.begin_request().unwrap();
+    actor.last_access.store(
+        now.saturating_sub(ACTOR_IDLE_TTL.as_secs() + 1),
+        Ordering::Release,
+    );
+    assert!(!actor.try_begin_idle_eviction(now));
+    assert!(!actor.closing.load(Ordering::Acquire));
+
+    drop(request);
+    actor.last_access.store(
+        now.saturating_sub(ACTOR_IDLE_TTL.as_secs() + 1),
+        Ordering::Release,
+    );
+    assert!(actor.try_begin_idle_eviction(now));
+    assert!(actor.closing.load(Ordering::Acquire));
+    assert!(actor.begin_request().is_err());
+}
