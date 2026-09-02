@@ -23,17 +23,26 @@ impl SlotLockingService for GatewayLockingService {
     ) -> Result<Response<LockSlotResponse>, Status> {
         let request = request.into_inner();
         if request.showtime_id < 0
+            || request.total_seat_count <= 0
             || request.seat_ids.is_empty()
-            || request.seat_ids.iter().any(|id| *id < 0)
+            || request.seat_ids.iter().any(|id| *id <= 0)
+            || request.seat_ids.len() != request.seat_indices.len()
         {
             return Err(Status::invalid_argument(
-                "showtime_id and seat_ids are required",
+                "showtime_id, total_seat_count, seat_ids and seat_indices are required",
             ));
         }
         let result = self
             .gateway
-            .lock(request.user_id, request.showtime_id, request.seat_ids)
-            .await;
+            .lock(
+                request.user_id,
+                request.showtime_id,
+                request.seat_ids,
+                request.seat_indices,
+                request.total_seat_count,
+            )
+            .await
+            .map_err(Status::invalid_argument)?;
         Ok(Response::new(LockSlotResponse {
             success: !result.locked_seat_ids.is_empty(),
             message: "Lock request processed by gateway keeper".into(),
@@ -48,16 +57,24 @@ impl SlotLockingService for GatewayLockingService {
     ) -> Result<Response<UnlockSlotResponse>, Status> {
         let request = request.into_inner();
         if request.showtime_id < 0
+            || request.total_seat_count <= 0
             || request.seat_ids.is_empty()
-            || request.seat_ids.iter().any(|id| *id < 0)
+            || request.seat_ids.iter().any(|id| *id <= 0)
+            || request.seat_ids.len() != request.seat_indices.len()
         {
             return Err(Status::invalid_argument(
-                "showtime_id and seat_ids are required",
+                "showtime_id, total_seat_count, seat_ids and seat_indices are required",
             ));
         }
         let unlocked_seat_ids = match self
             .gateway
-            .cancel(request.user_id, request.showtime_id, request.seat_ids)
+            .cancel(
+                request.user_id,
+                request.showtime_id,
+                request.seat_ids,
+                request.seat_indices,
+                request.total_seat_count,
+            )
             .await
         {
             Ok(ids) => ids,

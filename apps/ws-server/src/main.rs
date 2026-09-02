@@ -51,6 +51,7 @@ async fn main() {
         .await
         .expect("Failed to connect to gateway keeper gRPC server");
     let redis_pool = establish_pool().await.expect("Failed to create Redis pool");
+    let db_pool = bookit_db::db::create_db_pool();
     let single_node_lock = establish_seat_lock()
         .await
         .expect("Failed to create SeatLock");
@@ -59,6 +60,7 @@ async fn main() {
     let hooks = Arc::new(WsHooks::new(
         adapter.clone(),
         redis_pool.clone(),
+        db_pool,
         grpc_client,
         single_node_lock,
     ));

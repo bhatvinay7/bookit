@@ -156,6 +156,7 @@ pub async fn list_active_schedules(
             "start_time": s.start_time,
             "end_time": s.end_time,
             "booking_open_at": s.booking_open_at,
+            "booking_open": seconds_until_booking_open <= 0,
             "seconds_until_booking_open": seconds_until_booking_open,
             "total_seats": total,
             "available_seats": available,
@@ -223,6 +224,7 @@ pub async fn get_schedule_details(
         "start_time": schedule.start_time,
         "end_time": schedule.end_time,
         "booking_open_at": schedule.booking_open_at,
+        "booking_open": seconds_until_booking_open <= 0,
         "seconds_until_booking_open": seconds_until_booking_open,
         "venue_name": schedule.venue_name,
         "venue_address": schedule.venue_address,
@@ -251,6 +253,7 @@ pub async fn get_schedule_seats(
 
     let seats: Vec<ScheduleSeat> = schedule_seats::table
         .filter(schedule_seats::schedule_id.eq(id))
+        .order(schedule_seats::seat_index.asc())
         .load(&mut conn)
         .map_err(|e| AppError::internal(e.to_string()))?;
 
@@ -290,6 +293,7 @@ pub async fn get_schedule_seats(
         seats_json.push(serde_json::json!({
             "id": seat.id,
             "schedule_id": seat.schedule_id,
+            "seat_index": seat.seat_index,
             "layout_seat_id": seat.layout_seat_id,
             "source": seat.source,
             "row_letter": seat.row_letter,
@@ -382,6 +386,7 @@ pub async fn get_schedules_for_show(
             "start_time": s.start_time,
             "end_time": s.end_time,
             "booking_open_at": s.booking_open_at,
+            "booking_open": seconds_until_booking_open <= 0,
             "seconds_until_booking_open": seconds_until_booking_open,
             "total_seats": total,
             "available_seats": available,

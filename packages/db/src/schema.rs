@@ -114,6 +114,7 @@ diesel::table! {
     schedule_seats (id) {
         id -> Int4,
         schedule_id -> Int4,
+        seat_index -> Int4,
         layout_seat_id -> Nullable<Int4>,
         source -> SeatSource,
         #[max_length = 4]
@@ -128,8 +129,7 @@ diesel::table! {
 
 diesel::table! {
     use diesel::sql_types::*;
-    use super::sql_types::ShowType;
-    use super::sql_types::TimeSlot;
+    use super::sql_types::{ShowType, TimeSlot};
 
     schedules (id) {
         id -> Int4,

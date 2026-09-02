@@ -1,7 +1,8 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useState, Fragment, useEffect, useMemo } from "react";
 import { useShowtimes, useSeats } from "@/hooks/useApi";
-import type { Movie, SeatRow, SeatInfo } from "@/types";
+import type { Movie, SeatRow } from "@/types";
+import type { ScheduleSeat } from "@/types/schedule";
 import { Star } from "../movies/MovieCard";
 import { useSocket } from "../SocketProvider";
 import ShowtimeCard from "@/app/dashboard/components/ShowtimeCard";
@@ -69,7 +70,7 @@ export function BookingModal({ movie, onClose }: { movie: Movie; onClose: () => 
   // Transform SeatInfo[] into SeatRow[]
   const seatRows = useMemo(() => {
     if (!realSeats) return [];
-    const rows = new Map<string, SeatInfo[]>();
+    const rows = new Map<string, ScheduleSeat[]>();
     for (const s of realSeats) {
       if (!rows.has(s.row_letter)) rows.set(s.row_letter, []);
       rows.get(s.row_letter)!.push(s);
@@ -79,10 +80,10 @@ export function BookingModal({ movie, onClose }: { movie: Movie; onClose: () => 
       row,
       type: rows.get(row)![0].seat_class.toLowerCase() as 'standard' | 'premium',
       seats: rows.get(row)!.sort((a, b) => a.seat_number - b.seat_number).map(s => ({
-        id: s.seat_id,
+        id: s.id,
         label: `${s.row_letter}${s.seat_number}`,
         col: s.seat_number,
-        status: lockedSeatIds.includes(s.seat_id) || s.status === 'Booked' ? 'locked' : s.status === 'Available' ? 'available' : 'booked',
+        status: lockedSeatIds.includes(s.id) || s.status === 'Booked' ? 'locked' : s.status === 'Available' ? 'available' : 'booked',
         price: parseFloat(s.price),
       }))
     }));
@@ -90,12 +91,14 @@ export function BookingModal({ movie, onClose }: { movie: Movie; onClose: () => 
 
   const toggle = (id: number, status: 'available' | 'booked' | 'locked') => {
     if (status === 'booked' || status === 'locked') return
+    const seat = realSeats?.find((candidate) => candidate.id === id);
+    if (!selectedShowtimeId || !seat || !realSeats) return;
     setPicked(p => {
       if (p.includes(id)) {
-        if (selectedShowtimeId) unlockSeats(selectedShowtimeId, [id]);
+        unlockSeats(selectedShowtimeId, [id], [seat.seat_index], realSeats.length);
         return p.filter(s => s !== id);
       }
-      if (selectedShowtimeId) lockSeats(selectedShowtimeId, [id]);
+      lockSeats(selectedShowtimeId, [id], [seat.seat_index], realSeats.length);
       return [...p, id];
     })
   }
