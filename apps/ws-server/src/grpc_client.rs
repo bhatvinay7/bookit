@@ -22,6 +22,8 @@ impl GrpcLockClient {
         &self,
         showtime_id: i32,
         seat_ids: Vec<i32>,
+        seat_indices: Vec<i32>,
+        total_seat_count: i32,
         user_id: i32,
     ) -> Result<(bool, String, Vec<i32>, Vec<i32>), Box<dyn std::error::Error + Send + Sync>> {
         let mut client = self.client.clone();
@@ -30,6 +32,8 @@ impl GrpcLockClient {
             showtime_id,
             seat_ids,
             user_id,
+            total_seat_count,
+            seat_indices,
         });
 
         match client.lock_slot(request).await {
@@ -50,6 +54,8 @@ impl GrpcLockClient {
         &self,
         showtime_id: i32,
         seat_ids: Vec<i32>,
+        seat_indices: Vec<i32>,
+        total_seat_count: i32,
         user_id: i32,
     ) -> Result<(bool, String, Vec<i32>), Box<dyn std::error::Error + Send + Sync>> {
         let mut client = self.client.clone();
@@ -58,6 +64,8 @@ impl GrpcLockClient {
             showtime_id,
             seat_ids,
             user_id,
+            total_seat_count,
+            seat_indices,
         });
 
         match client.unlock_slot(request).await {

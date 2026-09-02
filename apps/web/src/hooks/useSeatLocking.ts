@@ -1,8 +1,9 @@
 /* eslint-disable react-hooks/set-state-in-effect */
 import { useState, useEffect, useCallback } from "react";
 import { useSocket } from "@/components/SocketProvider";
+import type { ScheduleSeat } from "@/types/schedule";
 
-export function useSeatLocking(scheduleId: number, onSuccess?: () => void) {
+export function useSeatLocking(scheduleId: number, seats: ScheduleSeat[], onSuccess?: () => void) {
   const { subscribe, unsubscribe, lockSeats, unlockSeats, syncLocks, lastMessage, socket, isConnected, wsUserId } = useSocket();
   const [lockedSeatIds, setLockedSeatIds] = useState<number[]>([]);
   
@@ -139,24 +140,30 @@ export function useSeatLocking(scheduleId: number, onSuccess?: () => void) {
 
   const requestLock = useCallback((seatIds: number[]) => {
     if (seatIds.length === 0) return;
+    const seatIndexById = new Map(seats.map((seat) => [seat.id, seat.seat_index]));
+    const seatIndices = seatIds.map((seatId) => seatIndexById.get(seatId));
+    if (seatIndices.some((seatIndex) => seatIndex == null)) return;
     setIsLocking(true);
     setFailedSeats([]);
     setShowDiscrepancyModal(false);
-    const sent = lockSeats(scheduleId, seatIds);
+    const sent = lockSeats(scheduleId, seatIds, seatIndices as number[], seats.length);
     if (!sent) {
       setIsLocking(false);
       alert("Connection offline. Please wait to reconnect.");
     } else {
       setTimeout(() => setIsLocking(false), 5000);
     }
-  }, [lockSeats, scheduleId]);
+  }, [lockSeats, scheduleId, seats]);
 
   const requestUnlock = useCallback((seatIds: number[]) => {
     if (seatIds.length === 0) return;
-    unlockSeats(scheduleId, seatIds);
+    const seatIndexById = new Map(seats.map((seat) => [seat.id, seat.seat_index]));
+    const seatIndices = seatIds.map((seatId) => seatIndexById.get(seatId));
+    if (seatIndices.some((seatIndex) => seatIndex == null)) return;
+    unlockSeats(scheduleId, seatIds, seatIndices as number[], seats.length);
     setMyLockedSeats((prev) => prev.filter((id) => !seatIds.includes(id)));
     setLockedSeatIds((prev) => prev.filter((id) => !seatIds.includes(id)));
-  }, [scheduleId, unlockSeats]);
+  }, [scheduleId, seats, unlockSeats]);
 
   const closeDiscrepancyModal = useCallback(() => {
     setShowDiscrepancyModal(false);

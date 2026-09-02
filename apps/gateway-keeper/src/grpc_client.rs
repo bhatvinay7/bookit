@@ -21,6 +21,8 @@ impl GrpcLockClient {
         &self,
         showtime_id: i32,
         seat_ids: Vec<i32>,
+        seat_indices: Vec<i32>,
+        total_seat_count: i32,
         user_id: i32,
     ) -> Result<(), tonic::Status> {
         self.client
@@ -29,6 +31,8 @@ impl GrpcLockClient {
                 showtime_id,
                 seat_ids,
                 user_id,
+                total_seat_count,
+                seat_indices,
             }))
             .await
             .map(|_| ())
@@ -38,6 +42,8 @@ impl GrpcLockClient {
         &self,
         showtime_id: i32,
         seat_ids: Vec<i32>,
+        seat_indices: Vec<i32>,
+        total_seat_count: i32,
         user_id: i32,
     ) -> Result<(), tonic::Status> {
         self.client
@@ -46,6 +52,8 @@ impl GrpcLockClient {
                 showtime_id,
                 seat_ids,
                 user_id,
+                total_seat_count,
+                seat_indices,
             }))
             .await
             .map(|_| ())

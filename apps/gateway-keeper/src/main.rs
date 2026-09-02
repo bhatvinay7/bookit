@@ -47,6 +47,8 @@ struct Claims {
 #[derive(Deserialize)]
 struct SeatRequest {
     seat_ids: Vec<i32>,
+    seat_indices: Vec<i32>,
+    total_seat_count: i32,
 }
 
 #[derive(Serialize)]
@@ -225,12 +227,23 @@ async fn lock_seats(
     Json(request): Json<SeatRequest>,
 ) -> Result<Json<LockResponse>, ApiError> {
     let user_id = authenticated_user(&headers, &state.jwt_secret)?;
-    validate_seats(&request.seat_ids)?;
+    validate_seats(
+        &request.seat_ids,
+        &request.seat_indices,
+        request.total_seat_count,
+    )?;
 
     let result = state
         .gateway
-        .lock(user_id, showtime_id, request.seat_ids)
-        .await;
+        .lock(
+            user_id,
+            showtime_id,
+            request.seat_ids,
+            request.seat_indices,
+            request.total_seat_count,
+        )
+        .await
+        .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "Invalid show seat metadata"))?;
     Ok(Json(LockResponse {
         success: !result.locked_seat_ids.is_empty(),
         locked_seat_ids: result.locked_seat_ids,
@@ -245,10 +258,20 @@ async fn cancel_seats(
     Json(request): Json<SeatRequest>,
 ) -> Result<Json<CancelResponse>, ApiError> {
     let user_id = authenticated_user(&headers, &state.jwt_secret)?;
-    validate_seats(&request.seat_ids)?;
+    validate_seats(
+        &request.seat_ids,
+        &request.seat_indices,
+        request.total_seat_count,
+    )?;
     let unlocked_seat_ids = match state
         .gateway
-        .cancel(user_id, showtime_id, request.seat_ids)
+        .cancel(
+            user_id,
+            showtime_id,
+            request.seat_ids,
+            request.seat_indices,
+            request.total_seat_count,
+        )
         .await
     {
         Ok(ids) => ids,
@@ -292,11 +315,22 @@ fn authenticated_user(headers: &HeaderMap, jwt_secret: &str) -> Result<i32, ApiE
         .map_err(|_| ApiError(StatusCode::UNAUTHORIZED, "invalid user identity"))
 }
 
-fn validate_seats(seat_ids: &[i32]) -> Result<(), ApiError> {
-    if seat_ids.is_empty() || seat_ids.iter().any(|seat_id| *seat_id < 0) {
+fn validate_seats(
+    seat_ids: &[i32],
+    seat_indices: &[i32],
+    total_seat_count: i32,
+) -> Result<(), ApiError> {
+    if seat_ids.is_empty()
+        || seat_ids.iter().any(|seat_id| *seat_id <= 0)
+        || seat_ids.len() != seat_indices.len()
+        || total_seat_count <= 0
+        || seat_indices
+            .iter()
+            .any(|index| *index <= 0 || *index > total_seat_count)
+    {
         return Err(ApiError(
             StatusCode::BAD_REQUEST,
-            "seat_ids must contain non-negative ids",
+            "seat_ids, seat_indices and total_seat_count are invalid",
         ));
     }
     Ok(())

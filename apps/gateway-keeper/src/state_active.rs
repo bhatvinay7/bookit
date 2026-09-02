@@ -2,7 +2,7 @@ use std::{
     panic::AssertUnwindSafe,
     sync::{
         Arc,
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicI32, AtomicU8, Ordering},
     },
     time::Duration,
 };
@@ -18,19 +18,111 @@ use tracing::{error, info, warn};
 const STATE_AVAILABLE: u8 = 0;
 const STATE_PROCESSING: u8 = 1;
 const SHOW_QUEUE_CAPACITY: usize = 5;
+const MAX_SEATS_PER_SHOW: usize = 200_000;
 const ACTOR_RESTART_DELAY: Duration = Duration::from_millis(500);
 
 type ShowKey = i32;
-type ShowSeatStates = Arc<DashMap<i32, Arc<CachePaddedSeatState>>>;
+type ShowSeatStates = Box<[CachePaddedSeatState]>;
+type ShowActorCell = Arc<tokio::sync::OnceCell<Arc<CachePaddedShowActor>>>;
 
 #[repr(align(64))]
 pub struct CachePaddedSeatState {
+    seat_id: AtomicI32,
     state: AtomicU8,
 }
 
 #[repr(align(64))]
 struct CachePaddedShowActor {
     sender: mpsc::Sender<GatewayTask>,
+    seat_states: ShowSeatStates,
+    seat_indices: DashMap<i32, usize>,
+}
+
+impl CachePaddedShowActor {
+    fn new(sender: mpsc::Sender<GatewayTask>, seat_count: usize) -> Result<Self, String> {
+        let mut seats = Vec::new();
+        seats
+            .try_reserve_exact(seat_count)
+            .map_err(|_| "unable to allocate show seat state".to_string())?;
+        seats.resize_with(seat_count, || CachePaddedSeatState {
+            seat_id: AtomicI32::new(0),
+            state: AtomicU8::new(STATE_AVAILABLE),
+        });
+        Ok(Self {
+            sender,
+            seat_states: seats.into_boxed_slice(),
+            seat_indices: DashMap::new(),
+        })
+    }
+
+    fn validate_seat_count(&self, seat_count: usize) -> Result<(), String> {
+        if self.seat_states.len() == seat_count {
+            Ok(())
+        } else {
+            Err("total seat count does not match the initialized show".into())
+        }
+    }
+
+    fn register_seat(&self, seat_id: i32, one_based_index: i32) -> Result<usize, String> {
+        if seat_id <= 0 {
+            return Err("seat ids must be positive".into());
+        }
+        let index = one_based_index
+            .checked_sub(1)
+            .and_then(|index| usize::try_from(index).ok())
+            .filter(|index| *index < self.seat_states.len())
+            .ok_or_else(|| "seat index is outside the show seat count".to_string())?;
+
+        if let Some(existing) = self.seat_indices.get(&seat_id) {
+            if *existing != index {
+                return Err("seat id maps to a different seat index".into());
+            }
+        } else {
+            match self.seat_indices.entry(seat_id) {
+                Entry::Occupied(entry) if *entry.get() != index => {
+                    return Err("seat id maps to a different seat index".into());
+                }
+                Entry::Occupied(_) => {}
+                Entry::Vacant(entry) => {
+                    entry.insert(index);
+                }
+            }
+        }
+
+        let slot = &self.seat_states[index];
+        match slot
+            .seat_id
+            .compare_exchange(0, seat_id, Ordering::SeqCst, Ordering::SeqCst)
+        {
+            Ok(_) => Ok(index),
+            Err(existing) if existing == seat_id => Ok(index),
+            Err(_) => {
+                self.seat_indices.remove_if(&seat_id, |_, mapped| *mapped == index);
+                Err("seat index maps to a different seat id".into())
+            }
+        }
+    }
+
+    fn try_admit(&self, index: usize) -> bool {
+        self.seat_states[index]
+            .state
+            .compare_exchange(
+                STATE_AVAILABLE,
+                STATE_PROCESSING,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .is_ok()
+    }
+
+    fn clear_seat(&self, seat_id: i32) {
+        let index = self.seat_indices.get(&seat_id).map(|index| *index);
+        if let Some(index) = index {
+            self.seat_states[index]
+                .state
+                .store(STATE_AVAILABLE, Ordering::SeqCst);
+        }
+    }
 }
 
 enum GatewayTask {
@@ -54,8 +146,7 @@ pub struct LockResult {
 
 #[derive(Clone)]
 pub struct GatewayState {
-    seat_states: Arc<DashMap<ShowKey, ShowSeatStates>>,
-    show_actors: Arc<DashMap<ShowKey, Arc<CachePaddedShowActor>>>,
+    show_actors: Arc<DashMap<ShowKey, ShowActorCell>>,
     pub redis_pool: RedisPool,
     pub single_node_lock: Arc<SingleNodeLock>,
     pub rmq_channel: Option<lapin::Channel>,
@@ -82,7 +173,6 @@ impl GatewayState {
         rmq_channel: Option<lapin::Channel>,
     ) -> Self {
         Self {
-            seat_states: Arc::new(DashMap::new()),
             show_actors: Arc::new(DashMap::new()),
             redis_pool,
             single_node_lock,
@@ -90,42 +180,45 @@ impl GatewayState {
         }
     }
 
-    pub async fn lock(&self, user_id: i32, showtime_id: i32, seat_ids: Vec<i32>) -> LockResult {
-        let show_seats = self.show_seat_states(showtime_id);
+    pub async fn lock(
+        &self,
+        user_id: i32,
+        showtime_id: i32,
+        seat_ids: Vec<i32>,
+        seat_indices: Vec<i32>,
+        total_seat_count: i32,
+    ) -> Result<LockResult, String> {
+        if seat_ids.len() != seat_indices.len() {
+            return Err("seat_ids and seat_indices must have the same length".into());
+        }
+        let actor = self
+            .get_or_create_show_actor(showtime_id, total_seat_count)
+            .await?;
+        let seats = seat_ids
+            .into_iter()
+            .zip(seat_indices)
+            .map(|(seat_id, seat_index)| {
+                actor
+                    .register_seat(seat_id, seat_index)
+                    .map(|index| (seat_id, index))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         let mut admitted = Vec::new();
         let mut failed = Vec::new();
-        for seat_id in seat_ids {
-            let seat = show_seats
-                .entry(seat_id)
-                .or_insert_with(|| {
-                    Arc::new(CachePaddedSeatState {
-                        state: AtomicU8::new(STATE_AVAILABLE),
-                    })
-                })
-                .clone();
-            if seat
-                .state
-                .compare_exchange(
-                    STATE_AVAILABLE,
-                    STATE_PROCESSING,
-                    Ordering::SeqCst,
-                    Ordering::SeqCst,
-                )
-                .is_ok()
-            {
+        for (seat_id, index) in seats {
+            if actor.try_admit(index) {
                 admitted.push(seat_id);
             } else {
                 failed.push(seat_id);
             }
         }
         if admitted.is_empty() {
-            return LockResult {
+            return Ok(LockResult {
                 locked_seat_ids: vec![],
                 failed_seat_ids: failed,
-            };
+            });
         }
 
-        let actor = self.get_or_create_show_actor(showtime_id);
         let (response, reply) = oneshot::channel();
         if actor
             .sender
@@ -138,10 +231,10 @@ impl GatewayState {
         {
             self.clear_admission(showtime_id, &admitted);
             failed.extend(admitted);
-            return LockResult {
+            return Ok(LockResult {
                 locked_seat_ids: vec![],
                 failed_seat_ids: failed,
-            };
+            });
         }
 
         let mut result = reply.await.unwrap_or_else(|_| LockResult {
@@ -150,7 +243,7 @@ impl GatewayState {
         });
         self.clear_admission(showtime_id, &result.failed_seat_ids);
         result.failed_seat_ids.extend(failed);
-        result
+        Ok(result)
     }
 
     pub async fn cancel(
@@ -158,7 +251,18 @@ impl GatewayState {
         user_id: i32,
         showtime_id: i32,
         seat_ids: Vec<i32>,
+        seat_indices: Vec<i32>,
+        total_seat_count: i32,
     ) -> Result<Vec<i32>, String> {
+        if seat_ids.len() != seat_indices.len() {
+            return Err("seat_ids and seat_indices must have the same length".into());
+        }
+        let actor = self
+            .get_or_create_show_actor(showtime_id, total_seat_count)
+            .await?;
+        for (&seat_id, &seat_index) in seat_ids.iter().zip(&seat_indices) {
+            actor.register_seat(seat_id, seat_index)?;
+        }
         if let Ok(mut conn) = self.redis_pool.get().await {
             for seat_id in &seat_ids {
                 let key = format!("seat_checkout:{showtime_id}:{seat_id}");
@@ -173,7 +277,6 @@ impl GatewayState {
             }
         }
         self.clear_admission(showtime_id, &seat_ids);
-        let actor = self.get_or_create_show_actor(showtime_id);
         let (response, reply) = oneshot::channel();
         actor
             .sender
@@ -187,24 +290,41 @@ impl GatewayState {
         Ok(reply.await.unwrap_or_default())
     }
 
-    fn show_seat_states(&self, key: ShowKey) -> ShowSeatStates {
-        self.seat_states
-            .entry(key)
-            .or_insert_with(|| Arc::new(DashMap::new()))
-            .clone()
-    }
-
-    fn get_or_create_show_actor(&self, key: ShowKey) -> Arc<CachePaddedShowActor> {
-        match self.show_actors.entry(key) {
-            Entry::Occupied(entry) => entry.get().clone(),
-            Entry::Vacant(entry) => {
-                let (sender, receiver) = mpsc::channel(SHOW_QUEUE_CAPACITY);
-                let actor = Arc::new(CachePaddedShowActor { sender });
-                entry.insert(actor.clone());
-                self.start_show_supervisor(key, Arc::new(Mutex::new(receiver)));
-                actor
+    async fn get_or_create_show_actor(
+        &self,
+        key: ShowKey,
+        total_seat_count: i32,
+    ) -> Result<Arc<CachePaddedShowActor>, String> {
+        let seat_count = usize::try_from(total_seat_count)
+            .ok()
+            .filter(|count| *count > 0 && *count <= MAX_SEATS_PER_SHOW)
+            .ok_or_else(|| format!("total_seat_count must be between 1 and {MAX_SEATS_PER_SHOW}"))?;
+        // Insert only a lightweight cell while holding the DashMap shard.
+        // Array allocation and supervisor startup happen once, outside it.
+        let actor_cell = if let Some(cell) = self.show_actors.get(&key) {
+            Arc::clone(cell.value())
+        } else {
+            let new_cell = Arc::new(tokio::sync::OnceCell::new());
+            match self.show_actors.entry(key) {
+                Entry::Occupied(entry) => Arc::clone(entry.get()),
+                Entry::Vacant(entry) => {
+                    entry.insert(Arc::clone(&new_cell));
+                    new_cell
+                }
             }
-        }
+        };
+        let actor = actor_cell
+            .get_or_try_init(|| async {
+                let (sender, receiver) = mpsc::channel(SHOW_QUEUE_CAPACITY);
+                let actor = Arc::new(CachePaddedShowActor::new(sender, seat_count)?);
+                // The map already owns actor_cell, so the supervisor's cloned
+                // GatewayState keeps this actor and its fixed array alive.
+                self.start_show_supervisor(key, Arc::new(Mutex::new(receiver)));
+                Ok::<_, String>(actor)
+            })
+            .await?;
+        actor.validate_seat_count(seat_count)?;
+        Ok(Arc::clone(actor))
     }
 
     fn start_show_supervisor(
@@ -361,12 +481,18 @@ impl GatewayState {
     }
 
     fn clear_admission(&self, key: ShowKey, seat_ids: &[i32]) {
-        if let Some(seats) = self.seat_states.get(&key) {
-            for seat_id in seat_ids {
-                if let Some(seat) = seats.get(seat_id) {
-                    seat.state.store(STATE_AVAILABLE, Ordering::SeqCst);
-                }
-            }
+        let Some(actor_cell) = self
+            .show_actors
+            .get(&key)
+            .map(|cell| Arc::clone(cell.value()))
+        else {
+            return;
+        };
+        let Some(actor) = actor_cell.get() else {
+            return;
+        };
+        for seat_id in seat_ids {
+            actor.clear_seat(*seat_id);
         }
     }
 
@@ -427,7 +553,8 @@ impl GatewayState {
         let mut stream = pubsub.on_message();
         while let Some(message) = stream.next().await {
             if let Ok(payload) = message.get_payload::<String>() {
-                self.handle_pubsub_message(&payload, message.get_channel_name());
+                let channel = message.get_channel_name();
+                self.handle_pubsub_message(&payload, channel);
             }
         }
         Ok(())
@@ -538,3 +665,7 @@ struct QueueEntry {
     schedule_id: i32,
     user_id: i32,
 }
+
+#[cfg(test)]
+#[path = "../tests/unit/state_active.rs"]
+mod tests;

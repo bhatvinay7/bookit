@@ -322,7 +322,7 @@ pub async fn create_schedule(
         .map_err(|e| AppError::internal(e.to_string()))?;
 
     // Load base seats from layout
-    let base_seats: Vec<SeatLayoutSeat> = seat_layout_seats::table
+    let mut base_seats: Vec<SeatLayoutSeat> = seat_layout_seats::table
         .filter(seat_layout_seats::layout_id.eq(body.layout_id))
         .load(&mut conn)
         .map_err(|e| AppError::internal(e.to_string()))?;
@@ -337,6 +337,13 @@ pub async fn create_schedule(
     let default_price = BigDecimal::from(0u32);
     let mut seen_seat_keys = std::collections::HashSet::new();
     let mut new_seats: Vec<NewScheduleSeat> = Vec::new();
+
+    base_seats.sort_by(|left, right| {
+        left.row_letter
+            .cmp(&right.row_letter)
+            .then(left.seat_number.cmp(&right.seat_number))
+            .then(left.id.cmp(&right.id))
+    });
 
     for seat in base_seats.iter() {
         if !seen_seat_keys.insert((seat.row_letter.clone(), seat.seat_number)) {
@@ -356,9 +363,12 @@ pub async fn create_schedule(
             .map(|s| s.as_str())
             .unwrap_or("0");
         let price = BigDecimal::from_str(price_str).unwrap_or_else(|_| default_price.clone());
+        let seat_index = i32::try_from(new_seats.len() + 1)
+            .map_err(|_| AppError::bad_request("Seat layout contains too many seats"))?;
 
         new_seats.push(NewScheduleSeat {
             schedule_id: schedule.id,
+            seat_index,
             layout_seat_id: Some(seat.id),
             source: SeatSource::Base,
             row_letter: seat.row_letter.clone(),
@@ -402,37 +412,77 @@ pub async fn add_extra_seats(
         .get()
         .map_err(|e| AppError::internal(e.to_string()))?;
 
-    // Verify schedule exists and is not deleted
-    let _sched: Schedule = schedules::table
-        .find(schedule_id)
-        .filter(schedules::deleted_at.is_null())
-        .first(&mut conn)
-        .map_err(|_| AppError::not_found("Schedule not found"))?;
+    let inserted = conn.transaction::<Vec<ScheduleSeat>, AppError, _>(|conn| {
+        // Serialize seat additions for a schedule so concurrent requests cannot
+        // allocate the same next seat_index.
+        let schedule: Schedule = schedules::table
+            .find(schedule_id)
+            .filter(schedules::deleted_at.is_null())
+            .for_update()
+            .first(conn)
+            .map_err(|error| match error {
+                diesel::result::Error::NotFound => AppError::not_found("Schedule not found"),
+                error => AppError::from(error),
+            })?;
 
-    let mut seen_seat_keys = std::collections::HashSet::new();
-    let mut new_seats = Vec::new();
-    for s in body.seats.iter() {
-        if !seen_seat_keys.insert((s.row_letter.clone(), s.seat_number)) {
-            continue;
+        // A gateway actor uses a fixed-size array. Once booking is open its
+        // seat count must remain immutable.
+        if schedule.booking_open_at <= Utc::now() {
+            return Err(AppError::bad_request(
+                "Cannot add seats after booking has opened",
+            ));
         }
-        let price = BigDecimal::from_str(&s.price)
-            .map_err(|_| AppError::bad_request(format!("Invalid price: {}", s.price)))?;
-        new_seats.push(NewScheduleSeat {
-            schedule_id,
-            layout_seat_id: None,
-            source: SeatSource::Extra,
-            row_letter: s.row_letter.clone(),
-            seat_number: s.seat_number,
-            seat_class: s.seat_class.clone(),
-            price,
-        });
-    }
 
-    let inserted: Vec<ScheduleSeat> = diesel::insert_into(schedule_seats::table)
-        .values(&new_seats)
-        .on_conflict_do_nothing()
-        .get_results(&mut conn)
-        .map_err(|e| AppError::internal(e.to_string()))?;
+        let mut existing_seat_keys: std::collections::HashSet<(String, i32)> =
+            schedule_seats::table
+                .filter(schedule_seats::schedule_id.eq(schedule_id))
+                .select((schedule_seats::row_letter, schedule_seats::seat_number))
+                .load::<(String, i32)>(conn)?
+                .into_iter()
+                .collect();
+        let mut next_seat_index = schedule_seats::table
+            .filter(schedule_seats::schedule_id.eq(schedule_id))
+            .select(schedule_seats::seat_index)
+            .order(schedule_seats::seat_index.desc())
+            .first::<i32>(conn)
+            .optional()?
+            .unwrap_or(0)
+            .checked_add(1)
+            .ok_or_else(|| AppError::bad_request("Schedule contains too many seats"))?;
+
+        let mut request_seat_keys = std::collections::HashSet::new();
+        let mut new_seats = Vec::new();
+        for seat in &body.seats {
+            let key = (seat.row_letter.clone(), seat.seat_number);
+            if !request_seat_keys.insert(key.clone()) || !existing_seat_keys.insert(key) {
+                continue;
+            }
+            let price = BigDecimal::from_str(&seat.price)
+                .map_err(|_| AppError::bad_request(format!("Invalid price: {}", seat.price)))?;
+            new_seats.push(NewScheduleSeat {
+                schedule_id,
+                seat_index: next_seat_index,
+                layout_seat_id: None,
+                source: SeatSource::Extra,
+                row_letter: seat.row_letter.clone(),
+                seat_number: seat.seat_number,
+                seat_class: seat.seat_class.clone(),
+                price,
+            });
+            next_seat_index = next_seat_index
+                .checked_add(1)
+                .ok_or_else(|| AppError::bad_request("Schedule contains too many seats"))?;
+        }
+
+        if new_seats.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        diesel::insert_into(schedule_seats::table)
+            .values(&new_seats)
+            .get_results(conn)
+            .map_err(AppError::from)
+    })?;
 
     // Invalidate caches since seat count changed
     invalidate_async(&state, &cache_schedule_key(schedule_id)).await;
@@ -517,10 +567,7 @@ pub async fn get_schedule_seats(
 
     let seats: Vec<ScheduleSeat> = schedule_seats::table
         .filter(schedule_seats::schedule_id.eq(schedule_id))
-        .order((
-            schedule_seats::row_letter.asc(),
-            schedule_seats::seat_number.asc(),
-        ))
+        .order(schedule_seats::seat_index.asc())
         .load(&mut conn)
         .map_err(|e| AppError::internal(e.to_string()))?;
 

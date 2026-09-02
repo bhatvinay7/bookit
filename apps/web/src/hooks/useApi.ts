@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import type {
-  Movie, Showtime, SeatInfo,
+  Movie, Showtime,
   AdminMovie, AdminShowtime, AdminStats,
   Screen, ScheduleData, Show,
 } from '@/types';
+import type { ScheduleSeat } from '@/types/schedule';
 import { useEffect } from 'react';
 
 // ─── Typed error ─────────────────────────────────────────────────────────────
@@ -117,9 +118,12 @@ export function useShowtimes(movieId: number | null) {
 
 // ─── User: Seats ─────────────────────────────────────────────────────────────
 export function useSeats(showtimeId: number | null) {
-  return useQuery<SeatInfo[], ApiError>({
+  return useQuery<ScheduleSeat[], ApiError>({
     queryKey: ['seats', showtimeId],
-    queryFn: () => apiFetch<SeatInfo[]>(`${USER_API}/schedules_v2/${showtimeId}/seats`),
+    queryFn: async () => {
+      const response = await apiFetch<{ seats: ScheduleSeat[] }>(`${USER_API}/schedules_v2/${showtimeId}/seats`);
+      return response.seats;
+    },
     enabled: !!showtimeId,
     refetchInterval: 10_000,
   });
