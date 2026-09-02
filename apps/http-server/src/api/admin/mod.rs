@@ -73,5 +73,7 @@ pub fn admin_routes(state: Arc<AppState>) -> Router {
                 .post(schedules_v2::add_extra_seats)
                 .put(schedules_v2::update_schedule_seats),
         )
+        .route("/schedules/:id/start", post(schedules_v2::start_schedule))
+        .route("/schedules/:id/close", post(schedules_v2::close_schedule))
         .with_state(state)
 }

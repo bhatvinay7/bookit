@@ -86,6 +86,18 @@ pub enum TimeSlot {
     Night,
 }
 
+#[derive(DbEnum, Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[ExistingTypePath = "crate::schema::sql_types::ScheduleLifecycleState"]
+#[serde(rename_all = "lowercase")]
+pub enum ScheduleLifecycleState {
+    #[db_rename = "scheduled"]
+    Scheduled,
+    #[db_rename = "open"]
+    Open,
+    #[db_rename = "closed"]
+    Closed,
+}
+
 // ─── Existing models (unchanged) ──────────────────────────────────────────────
 
 #[derive(Queryable, Selectable, Identifiable, Debug, Clone, Serialize, Deserialize)]
@@ -154,6 +166,7 @@ pub struct Schedule {
     pub layout_id: Option<i32>,
     pub start_time: chrono::DateTime<chrono::Utc>,
     pub booking_open_at: chrono::DateTime<chrono::Utc>,
+    pub lifecycle_state: ScheduleLifecycleState,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     pub venue_name: Option<String>,
@@ -196,6 +209,7 @@ pub struct ScheduleWithStats {
     pub layout_id: i32,
     pub start_time: chrono::DateTime<chrono::Utc>,
     pub booking_open_at: chrono::DateTime<chrono::Utc>,
+    pub lifecycle_state: ScheduleLifecycleState,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub deleted_at: Option<chrono::DateTime<chrono::Utc>>,
     pub venue_name: Option<String>,
