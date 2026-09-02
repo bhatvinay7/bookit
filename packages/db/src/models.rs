@@ -174,6 +174,7 @@ pub struct Schedule {
 pub struct ScheduleSeat {
     pub id: i32,
     pub schedule_id: i32,
+    pub seat_index: i32,
     pub layout_seat_id: Option<i32>,
     pub source: SeatSource,
     pub row_letter: String,

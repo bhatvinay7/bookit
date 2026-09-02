@@ -11,6 +11,8 @@ message LockSlotRequest {
   int32 showtime_id = 1;
   repeated int32 seat_ids = 2;
   int32 user_id = 3;
+  int32 total_seat_count = 4;
+  repeated int32 seat_indices = 5;
 }
 
 message LockSlotResponse {
@@ -24,6 +26,8 @@ message UnlockSlotRequest {
   int32 showtime_id = 1;
   repeated int32 seat_ids = 2;
   int32 user_id = 3;
+  int32 total_seat_count = 4;
+  repeated int32 seat_indices = 5;
 }
 
 message UnlockSlotResponse {

@@ -56,6 +56,7 @@ pub struct NewSchedule {
 #[diesel(table_name = crate::schema::schedule_seats)]
 pub struct NewScheduleSeat {
     pub schedule_id: i32,
+    pub seat_index: i32,
     pub layout_seat_id: Option<i32>,
     pub source: crate::models::SeatSource,
     pub row_letter: String,
