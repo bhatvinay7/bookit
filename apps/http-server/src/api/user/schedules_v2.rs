@@ -12,7 +12,7 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use bookit_db::{
-    models::{Schedule, ScheduleSeat},
+    models::{Schedule, ScheduleLifecycleState, ScheduleSeat},
     schema::{schedule_seats, schedules},
 };
 use bookit_mongo::models::Show;
@@ -102,6 +102,7 @@ pub async fn list_active_schedules(
 
     let rows: Vec<Schedule> = schedules::table
         .filter(schedules::deleted_at.is_null())
+        .filter(schedules::lifecycle_state.ne(ScheduleLifecycleState::Closed))
         .filter(schedules::start_time.gt(now))
         .order(schedules::start_time.asc())
         .load(&mut conn)
@@ -156,7 +157,8 @@ pub async fn list_active_schedules(
             "start_time": s.start_time,
             "end_time": s.end_time,
             "booking_open_at": s.booking_open_at,
-            "booking_open": seconds_until_booking_open <= 0,
+            "lifecycle_state": s.lifecycle_state,
+            "booking_open": s.lifecycle_state == ScheduleLifecycleState::Open,
             "seconds_until_booking_open": seconds_until_booking_open,
             "total_seats": total,
             "available_seats": available,
@@ -224,7 +226,8 @@ pub async fn get_schedule_details(
         "start_time": schedule.start_time,
         "end_time": schedule.end_time,
         "booking_open_at": schedule.booking_open_at,
-        "booking_open": seconds_until_booking_open <= 0,
+        "lifecycle_state": schedule.lifecycle_state,
+        "booking_open": schedule.lifecycle_state == ScheduleLifecycleState::Open,
         "seconds_until_booking_open": seconds_until_booking_open,
         "venue_name": schedule.venue_name,
         "venue_address": schedule.venue_address,
@@ -256,8 +259,6 @@ pub async fn get_schedule_seats(
         .order(schedule_seats::seat_index.asc())
         .load(&mut conn)
         .map_err(|e| AppError::internal(e.to_string()))?;
-
-    let seconds_until_booking_open = (schedule.booking_open_at - Utc::now()).num_seconds();
 
     let mut redis_conn = state.redis_client.get_connection().ok();
 
@@ -310,7 +311,8 @@ pub async fn get_schedule_seats(
         StatusCode::OK,
         Json(serde_json::json!({
             "schedule_id": id,
-            "booking_open": seconds_until_booking_open <= 0,
+            "lifecycle_state": schedule.lifecycle_state,
+            "booking_open": schedule.lifecycle_state == ScheduleLifecycleState::Open,
             "seats": seats_json
         })),
     ))
@@ -341,6 +343,7 @@ pub async fn get_schedules_for_show(
         let mut schedules_query = schedules::table
             .filter(schedules::mongo_show_id.eq(&show_id))
             .filter(schedules::deleted_at.is_null())
+            .filter(schedules::lifecycle_state.ne(ScheduleLifecycleState::Closed))
             .filter(schedules::start_time.gt(now))
             .into_boxed();
 
@@ -358,10 +361,11 @@ pub async fn get_schedules_for_show(
 
     let mut results = Vec::new();
 
-    for s in rows
-        .into_iter()
-        .filter(|schedule| schedule.deleted_at.is_none() && schedule.start_time > now)
-    {
+    for s in rows.into_iter().filter(|schedule| {
+        schedule.deleted_at.is_none()
+            && schedule.lifecycle_state != ScheduleLifecycleState::Closed
+            && schedule.start_time > now
+    }) {
         let seconds_until_booking_open = (s.booking_open_at - Utc::now()).num_seconds();
 
         let total: i64 = schedule_seats::table
@@ -386,7 +390,8 @@ pub async fn get_schedules_for_show(
             "start_time": s.start_time,
             "end_time": s.end_time,
             "booking_open_at": s.booking_open_at,
-            "booking_open": seconds_until_booking_open <= 0,
+            "lifecycle_state": s.lifecycle_state,
+            "booking_open": s.lifecycle_state == ScheduleLifecycleState::Open,
             "seconds_until_booking_open": seconds_until_booking_open,
             "total_seats": total,
             "available_seats": available,

@@ -2,12 +2,12 @@ use std::{
     panic::AssertUnwindSafe,
     sync::{
         Arc,
-        atomic::{AtomicI32, AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicI32, AtomicU8, AtomicU64, AtomicUsize, Ordering},
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use dashmap::{DashMap, mapref::entry::Entry};
+use dashmap::{DashMap, DashSet, mapref::entry::Entry};
 use futures_util::{FutureExt, StreamExt};
 use redis::AsyncCommands;
 use redis_conn::{RedisPool, SeatLock, SingleNodeLock, adapter::PubSubEvent, keys};
@@ -19,6 +19,8 @@ const STATE_AVAILABLE: u8 = 0;
 const STATE_PROCESSING: u8 = 1;
 const SHOW_QUEUE_CAPACITY: usize = 5;
 const MAX_SEATS_PER_SHOW: usize = 200_000;
+const ACTOR_IDLE_TTL: Duration = Duration::from_secs(2 * 60 * 60);
+const ACTOR_CLEANUP_INTERVAL: Duration = Duration::from_secs(60);
 const ACTOR_RESTART_DELAY: Duration = Duration::from_millis(500);
 
 type ShowKey = i32;
@@ -36,6 +38,27 @@ struct CachePaddedShowActor {
     sender: mpsc::Sender<GatewayTask>,
     seat_states: ShowSeatStates,
     seat_indices: DashMap<i32, usize>,
+    last_access: AtomicU64,
+    in_flight: AtomicUsize,
+    closing: AtomicBool,
+}
+
+struct ActorRequestLease {
+    actor: Arc<CachePaddedShowActor>,
+}
+
+impl Drop for ActorRequestLease {
+    fn drop(&mut self) {
+        self.actor.last_access.store(unix_now(), Ordering::Release);
+        self.actor.in_flight.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 impl CachePaddedShowActor {
@@ -52,7 +75,43 @@ impl CachePaddedShowActor {
             sender,
             seat_states: seats.into_boxed_slice(),
             seat_indices: DashMap::new(),
+            last_access: AtomicU64::new(unix_now()),
+            in_flight: AtomicUsize::new(0),
+            closing: AtomicBool::new(false),
         })
+    }
+
+    fn begin_request(self: &Arc<Self>) -> Result<ActorRequestLease, String> {
+        if self.closing.load(Ordering::Acquire) {
+            return Err("show actor is closing".into());
+        }
+        self.in_flight.fetch_add(1, Ordering::AcqRel);
+        if self.closing.load(Ordering::Acquire) {
+            self.in_flight.fetch_sub(1, Ordering::AcqRel);
+            return Err("show actor is closing".into());
+        }
+        self.last_access.store(unix_now(), Ordering::Release);
+        Ok(ActorRequestLease {
+            actor: Arc::clone(self),
+        })
+    }
+
+    fn try_begin_idle_eviction(&self, now: u64) -> bool {
+        let idle_for = now.saturating_sub(self.last_access.load(Ordering::Acquire));
+        if idle_for < ACTOR_IDLE_TTL.as_secs()
+            || self
+                .closing
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_err()
+        {
+            return false;
+        }
+        if self.in_flight.load(Ordering::Acquire) == 0 {
+            true
+        } else {
+            self.closing.store(false, Ordering::Release);
+            false
+        }
     }
 
     fn validate_seat_count(&self, seat_count: usize) -> Result<(), String> {
@@ -147,6 +206,7 @@ pub struct LockResult {
 #[derive(Clone)]
 pub struct GatewayState {
     show_actors: Arc<DashMap<ShowKey, ShowActorCell>>,
+    closed_shows: Arc<DashSet<ShowKey>>,
     pub redis_pool: RedisPool,
     pub single_node_lock: Arc<SingleNodeLock>,
     pub rmq_channel: Option<lapin::Channel>,
@@ -174,6 +234,7 @@ impl GatewayState {
     ) -> Self {
         Self {
             show_actors: Arc::new(DashMap::new()),
+            closed_shows: Arc::new(DashSet::new()),
             redis_pool,
             single_node_lock,
             rmq_channel,
@@ -194,6 +255,7 @@ impl GatewayState {
         let actor = self
             .get_or_create_show_actor(showtime_id, total_seat_count)
             .await?;
+        let _request_lease = actor.begin_request()?;
         let seats = seat_ids
             .into_iter()
             .zip(seat_indices)
@@ -260,6 +322,7 @@ impl GatewayState {
         let actor = self
             .get_or_create_show_actor(showtime_id, total_seat_count)
             .await?;
+        let _request_lease = actor.begin_request()?;
         for (&seat_id, &seat_index) in seat_ids.iter().zip(&seat_indices) {
             actor.register_seat(seat_id, seat_index)?;
         }
@@ -295,6 +358,22 @@ impl GatewayState {
         key: ShowKey,
         total_seat_count: i32,
     ) -> Result<Arc<CachePaddedShowActor>, String> {
+        if self.closed_shows.contains(&key) {
+            return Err("schedule is closed".into());
+        }
+        if !self.show_actors.contains_key(&key)
+            && let Ok(mut redis) = self.redis_pool.get().await
+        {
+            let closed: bool = redis::cmd("EXISTS")
+                .arg(keys::schedule_closed_key(key))
+                .query_async(&mut *redis)
+                .await
+                .unwrap_or(false);
+            if closed {
+                self.closed_shows.insert(key);
+                return Err("schedule is closed".into());
+            }
+        }
         let seat_count = usize::try_from(total_seat_count)
             .ok()
             .filter(|count| *count > 0 && *count <= MAX_SEATS_PER_SHOW)
@@ -315,14 +394,25 @@ impl GatewayState {
         };
         let actor = actor_cell
             .get_or_try_init(|| async {
+                if self.closed_shows.contains(&key) {
+                    return Err("schedule is closed".to_string());
+                }
                 let (sender, receiver) = mpsc::channel(SHOW_QUEUE_CAPACITY);
                 let actor = Arc::new(CachePaddedShowActor::new(sender, seat_count)?);
+                if self.closed_shows.contains(&key) {
+                    actor.closing.store(true, Ordering::Release);
+                    return Err("schedule is closed".to_string());
+                }
                 // The map already owns actor_cell, so the supervisor's cloned
                 // GatewayState keeps this actor and its fixed array alive.
                 self.start_show_supervisor(key, Arc::new(Mutex::new(receiver)));
                 Ok::<_, String>(actor)
             })
             .await?;
+        if self.closed_shows.contains(&key) {
+            actor.closing.store(true, Ordering::Release);
+            return Err("schedule is closed".into());
+        }
         actor.validate_seat_count(seat_count)?;
         Ok(Arc::clone(actor))
     }
@@ -512,6 +602,65 @@ impl GatewayState {
         });
     }
 
+    pub fn start_actor_cleanup_worker(&self) {
+        let state = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(ACTOR_CLEANUP_INTERVAL);
+            loop {
+                interval.tick().await;
+                state.reconcile_closed_actors().await;
+                state.evict_idle_actors(unix_now());
+            }
+        });
+    }
+
+    async fn reconcile_closed_actors(&self) {
+        let schedule_ids = self
+            .show_actors
+            .iter()
+            .map(|entry| *entry.key())
+            .collect::<Vec<_>>();
+        if schedule_ids.is_empty() {
+            return;
+        }
+        let Ok(mut redis) = self.redis_pool.get().await else {
+            return;
+        };
+        let mut pipeline = redis::pipe();
+        for schedule_id in &schedule_ids {
+            pipeline
+                .cmd("EXISTS")
+                .arg(keys::schedule_closed_key(*schedule_id));
+        }
+        let Ok(closed) = pipeline.query_async::<Vec<bool>>(&mut *redis).await else {
+            return;
+        };
+        for (schedule_id, closed) in schedule_ids.into_iter().zip(closed) {
+            if closed {
+                self.mark_schedule_closed(schedule_id);
+            }
+        }
+    }
+
+    fn evict_idle_actors(&self, now: u64) {
+        let actors = self
+            .show_actors
+            .iter()
+            .map(|entry| (*entry.key(), Arc::clone(entry.value())))
+            .collect::<Vec<_>>();
+        for (key, cell) in actors {
+            let Some(actor) = cell.get() else {
+                continue;
+            };
+            if !actor.try_begin_idle_eviction(now) {
+                continue;
+            }
+            self.show_actors
+                .remove_if(&key, |_, current| Arc::ptr_eq(current, &cell));
+            info!(showtime_id = key, "evicted idle show actor");
+        }
+    }
+
     async fn run_expiry_loop(&self) {
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
@@ -550,14 +699,43 @@ impl GatewayState {
         let client = redis::Client::open(url)?;
         let mut pubsub = client.get_async_pubsub().await?;
         pubsub.psubscribe("room:*").await?;
+        pubsub.subscribe(keys::schedule_lifecycle_channel()).await?;
         let mut stream = pubsub.on_message();
         while let Some(message) = stream.next().await {
             if let Ok(payload) = message.get_payload::<String>() {
                 let channel = message.get_channel_name();
-                self.handle_pubsub_message(&payload, channel);
+                if channel == keys::schedule_lifecycle_channel() {
+                    self.handle_schedule_lifecycle_message(&payload);
+                } else {
+                    self.handle_pubsub_message(&payload, channel);
+                }
             }
         }
         Ok(())
+    }
+
+    fn handle_schedule_lifecycle_message(&self, payload: &str) {
+        match serde_json::from_str::<PubSubEvent>(payload) {
+            Ok(PubSubEvent::ScheduleClosed { schedule_id }) => {
+                self.mark_schedule_closed(schedule_id);
+            }
+            Ok(PubSubEvent::ScheduleOpened { schedule_id }) => {
+                self.closed_shows.remove(&schedule_id);
+                info!(schedule_id, "opened schedule for actor creation");
+            }
+            Ok(_) => {}
+            Err(error) => warn!(?error, "invalid schedule lifecycle event"),
+        }
+    }
+
+    fn mark_schedule_closed(&self, schedule_id: ShowKey) {
+        self.closed_shows.insert(schedule_id);
+        if let Some((_, cell)) = self.show_actors.remove(&schedule_id)
+            && let Some(actor) = cell.get()
+        {
+            actor.closing.store(true, Ordering::Release);
+        }
+        info!(schedule_id, "closed show actor");
     }
 
     fn handle_pubsub_message(&self, payload: &str, channel: &str) {

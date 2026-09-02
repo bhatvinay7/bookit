@@ -33,6 +33,7 @@ export interface ScheduleV2 {
   start_time: string;
   end_time: string;
   booking_open_at: string;
+  lifecycle_state: 'scheduled' | 'open' | 'closed';
   created_at: string;
   deleted_at?: string | null;
   venue_name?: string | null;
