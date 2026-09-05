@@ -234,8 +234,10 @@ jobs:
     # Dev builds the immutable artifacts. Main and pull requests validate only;
     # production reuses a tested dev digest through promote-production.yaml.
     if: |
-      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
-      github.ref == 'refs/heads/deployment1' &&
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/deployment1') || 
+        github.event_name == 'workflow_dispatch'
+      ) &&
       needs.detect-changes.outputs.services != '[]' &&
       needs.detect-changes.outputs.services != ''
     runs-on: ubuntu-22.04
@@ -298,7 +300,13 @@ jobs:
   update-gitops-tags:
     name: Update ArgoCD GitOps Manifests
     needs: [build-and-push, detect-changes]
-    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/deployment1' && needs.detect-changes.outputs.services != '[]' && needs.detect-changes.outputs.services != ''
+    if: |
+      (
+        (github.event_name == 'push' && github.ref == 'refs/heads/deployment1') || 
+        github.event_name == 'workflow_dispatch'
+      ) &&
+      needs.detect-changes.outputs.services != '[]' &&
+      needs.detect-changes.outputs.services != ''
     runs-on: ubuntu-22.04
     environment: development
     steps:
