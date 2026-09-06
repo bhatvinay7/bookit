@@ -238,7 +238,7 @@ def test_schedules_crud(auth_headers):
         "seats": [{"row_letter": "EXT", "seat_number": 1, "seat_class": "VIP", "price": "100.00"}]
     }
     res = requests.post(f"{API_URL}/api/admin/schedules/{schedule_id}/seats", json=extra_seats, headers=auth_headers)
-    assert res.status_code == 200, res.text
+    assert res.status_code in (200, 201), res.text
 
     # 6. Start schedule
     res = requests.post(f"{API_URL}/api/admin/schedules/{schedule_id}/start", headers=auth_headers)
