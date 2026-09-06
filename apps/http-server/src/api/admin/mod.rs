@@ -10,8 +10,7 @@ pub mod upload;
 use crate::api::state::AppState;
 use crate::middleware::auth::AdminUser;
 use axum::{
-    Router,
-    middleware,
+    Router, middleware,
     routing::{get, post},
 };
 use std::sync::Arc;
