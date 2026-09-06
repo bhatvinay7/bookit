@@ -58,16 +58,16 @@ def test_create_and_list_categories(auth_headers):
     res = requests.post(f"{API_URL}/api/admin/categories", json=payload, headers=auth_headers)
     assert res.status_code in (200, 201), res.text
     created = res.json()
-    assert "_id" in created
+    assert "id" in created
     assert created["slug"] == unique_slug
-    cat_id = created["_id"]["$oid"]
+    cat_id = created["id"]
 
     # 2. List categories
     res = requests.get(f"{API_URL}/api/admin/categories", headers=auth_headers)
     assert res.status_code == 200
     categories = res.json()
     assert isinstance(categories, list)
-    assert any(c["_id"]["$oid"] == cat_id for c in categories)
+    assert any(c["id"] == cat_id for c in categories)
 
     # 3. Get category by ID
     res = requests.get(f"{API_URL}/api/admin/categories/{cat_id}", headers=auth_headers)
@@ -230,8 +230,8 @@ def test_schedules_crud(auth_headers):
     res = requests.get(f"{API_URL}/api/admin/schedules", headers=auth_headers)
     assert res.status_code == 200
     schedules = res.json()
-    assert "items" in schedules
-    assert any(s["id"] == schedule_id for s in schedules["items"])
+    assert isinstance(schedules, list)
+    assert any(s["id"] == schedule_id for s in schedules)
 
     # 5. Add extra seats
     extra_seats = {
