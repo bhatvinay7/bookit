@@ -8,8 +8,10 @@ pub mod stats;
 pub mod upload;
 
 use crate::api::state::AppState;
+use crate::middleware::auth::AdminUser;
 use axum::{
     Router,
+    middleware,
     routing::{get, post},
 };
 use std::sync::Arc;
@@ -75,5 +77,6 @@ pub fn admin_routes(state: Arc<AppState>) -> Router {
         )
         .route("/schedules/:id/start", post(schedules_v2::start_schedule))
         .route("/schedules/:id/close", post(schedules_v2::close_schedule))
+        .route_layer(middleware::from_extractor::<AdminUser>())
         .with_state(state)
 }
