@@ -103,7 +103,7 @@ runtime request path.
 | `payment-processor` | RabbitMQ consumer | Completes/cancels orders and records audit/outbox events | RabbitMQ, PostgreSQL, Redis, Razorpay | 1–5 pods, CPU target 75%; one consumer loop/pod |
 | `outbox-server` | PostgreSQL consumer | Reliably publishes transactional outbox events to RabbitMQ | PostgreSQL, RabbitMQ | 1 pod active |
 | `notification-worker` | RabbitMQ consumer | Creates ticket records/PDF requests and sends booking email | RabbitMQ, PostgreSQL, HTTP API, Gmail/SMTP | 1–5 pods, CPU target 75%; one consumer loop/pod |
-| `cdc-worker` | Mongo change stream + Redis Stream | Moves show changes from MongoDB into the search update stream | MongoDB, Redis | Source exists; no active base Kubernetes workload yet |
+| `cdc-worker` | Mongo change stream + Redis Stream | Moves show changes from MongoDB into the search update stream | MongoDB, Redis | 1–5 pods, CPU target 75% |
 
 The ingress routes all public API and gRPC traffic through `gateway-keeper`.
 Gateway routes under `/api/*` forward to the internal HTTP or search services
@@ -112,19 +112,7 @@ service, and WebSocket upgrades go directly to `ws-server`; those protocols are
 not implemented by the gateway and enforce their own session/authentication
 rules.
 
-### Known deployment gaps
 
-The diagrams describe the intended runtime relationships, but the following
-checked-in mismatches must be fixed before treating the Kubernetes deployment as
-operational:
-
-| Gap | Current state | Impact |
-|---|---|---|
-| CDC deployment | `cdc-worker` source and Docker build exist, but it is absent from `apps/base` | MongoDB changes do not reach Redis Stream unless run outside this base |
-| Health probes | Application Deployments do not define readiness/startup/liveness probes | Kubernetes can route traffic before dependencies are usable and detect deadlocks slowly |
-
-Add a CDC Deployment before relying on automatic MongoDB-to-search propagation.
-This is a correctness issue, not a tuning improvement.
 
 ## Core request and event flows
 
