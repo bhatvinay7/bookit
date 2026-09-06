@@ -59,7 +59,9 @@ pub async fn list_categories(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
     // ── Cache hit ────────────────────────────────────────────────────────────
-    if let Some(cached) = cache::get_async_cached::<Vec<CategoryResponse>>(&state, CACHE_KEY_ADMIN).await {
+    if let Some(cached) =
+        cache::get_async_cached::<Vec<CategoryResponse>>(&state, CACHE_KEY_ADMIN).await
+    {
         return Ok(Json(cached));
     }
 
