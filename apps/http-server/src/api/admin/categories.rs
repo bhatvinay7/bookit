@@ -5,7 +5,7 @@ use axum::{
     response::IntoResponse,
 };
 use bson::{doc, oid::ObjectId};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use mongodb::Collection;
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,31 @@ use crate::api::state::AppState;
 use crate::helpers::errors::AppError;
 use crate::services::cache;
 use bookit_mongo::models::Category;
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct CategoryResponse {
+    pub id: String,
+    pub name: String,
+    pub slug: String,
+    pub description: Option<String>,
+    pub image_url: Option<String>,
+    pub created_at: Option<DateTime<Utc>>,
+    pub updated_at: Option<DateTime<Utc>>,
+}
+
+impl From<Category> for CategoryResponse {
+    fn from(c: Category) -> Self {
+        Self {
+            id: c.id.map(|oid| oid.to_hex()).unwrap_or_default(),
+            name: c.name,
+            slug: c.slug,
+            description: c.description,
+            image_url: c.image_url,
+            created_at: c.created_at,
+            updated_at: c.updated_at,
+        }
+    }
+}
 
 /// Cache keys to bust whenever categories change.
 /// Bust both public + admin lists so neither serves stale data.
@@ -34,7 +59,7 @@ pub async fn list_categories(
     State(state): State<Arc<AppState>>,
 ) -> Result<impl IntoResponse, AppError> {
     // ── Cache hit ────────────────────────────────────────────────────────────
-    if let Some(cached) = cache::get_async_cached::<Vec<Category>>(&state, CACHE_KEY_ADMIN).await {
+    if let Some(cached) = cache::get_async_cached::<Vec<CategoryResponse>>(&state, CACHE_KEY_ADMIN).await {
         return Ok(Json(cached));
     }
 
@@ -53,7 +78,7 @@ pub async fn list_categories(
     let mut categories = Vec::new();
     while let Some(doc) = cursor.next().await {
         if let Ok(c) = doc {
-            categories.push(c);
+            categories.push(CategoryResponse::from(c));
         }
     }
 
@@ -105,7 +130,7 @@ pub async fn create_category(
     // Bust cache so next GET reflects the new category.
     bust_cache(&state).await;
 
-    Ok((StatusCode::CREATED, Json(created)))
+    Ok((StatusCode::CREATED, Json(CategoryResponse::from(created))))
 }
 
 /// Helper: invalidate all category cache keys (fire-and-forget).
@@ -131,7 +156,7 @@ pub async fn get_category(
         .map_err(|_| AppError::internal("DB Error"))?;
 
     match cat {
-        Some(c) => Ok(Json(c)),
+        Some(c) => Ok(Json(CategoryResponse::from(c))),
         None => Err(AppError::not_found("Category not found")),
     }
 }
