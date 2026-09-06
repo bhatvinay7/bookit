@@ -11,6 +11,13 @@ are configuration-derived ceilings or sizing formulas, not benchmark claims.
 
 ## Architecture at a glance
 
+### Monitoring & Alerting (Industry Standards)
+This repository employs industry-standard monitoring methodologies to ensure reliability:
+- **USE Method (Infrastructure):** Dashboards and automated Prometheus rules to track Node/Pod **U**tilization, **S**aturation, and **E**rrors (e.g., detecting CrashLoopBackOffs or >90% memory limits).
+- **RED Method (Applications):** Custom Grafana dashboards and alerts to track **R**ate, **E**rrors, and **D**uration (latency) across all microservices.
+- **Alerting:** Critical alerts are automatically routed to `tickethandle24@gmail.com` via Alertmanager.
+  - *Note:* Alertmanager requires a Gmail App Password. You must update `infra/base/monitoring/prometheus-grafana.yaml` with your actual password (or inject it securely via a Kubernetes Secret) for emails to successfully send.
+
 ```mermaid
 flowchart LR
     classDef edge fill:#e0f2fe,stroke:#0284c7,stroke-width:2px,color:#082f49
