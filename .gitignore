@@ -7,4 +7,4 @@ node_modules/
 .env.deployment
 update_mongo_cities.js
 seed.js
-bookit-k8s
+bookit-k8s__pycache__/
