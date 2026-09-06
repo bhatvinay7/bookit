@@ -23,6 +23,7 @@ on:
           - outbox-server
           - search-server
           - web
+          - cdc-worker
 env:
   REGISTRY: ghcr.io
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
@@ -181,12 +182,20 @@ jobs:
               - 'apps/web/**'
               - 'pnpm-lock.yaml'
               - 'turbo.json'
+            cdc-worker:
+              - 'apps/cdc-worker/**'
+              - 'packages/db/**'
+              - 'packages/redis-conn/**'
+              - 'packages/mongo-conn/**'
+              - 'packages/rmq-conn/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
 
       - name: Resolve services to build
         id: resolve
         shell: bash
         run: |
-          ALL_SERVICES='["http-server","ws-server","gateway-keeper","lock-server","notification-worker","payment-processor","outbox-server","search-server","web"]'
+          ALL_SERVICES='["http-server","ws-server","gateway-keeper","lock-server","notification-worker","payment-processor","outbox-server","search-server","web","cdc-worker"]'
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             if [ "${{ inputs.service }}" = "all" ]; then
