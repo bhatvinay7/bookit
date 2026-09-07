@@ -52,10 +52,7 @@ impl IntoResponse for AppError {
             }
             AppError::Internal(e) => {
                 tracing::error!("Internal error: {}", e);
-                (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    e.to_string(),
-                )
+                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
             }
         };
         (status, Json(json!({ "error": message }))).into_response()
