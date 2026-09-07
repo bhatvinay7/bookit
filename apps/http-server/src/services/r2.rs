@@ -9,7 +9,11 @@ fn build_client() -> S3Client {
     let account_id = std::env::var("CLOUDFLARE_R2_ACCOUNT_ID").unwrap_or_default();
     let access_key = std::env::var("CLOUDFLARE_R2_ACCESS_KEY_ID").unwrap_or_default();
     let secret_key = std::env::var("CLOUDFLARE_R2_SECRET_ACCESS_KEY").unwrap_or_default();
-    let endpoint = format!("https://{account_id}.r2.cloudflarestorage.com");
+    // Prefer the explicit endpoint from env (set in sealed secrets as
+    // CLOUDFLARE_R2_ENDPOINT). Fall back to constructing it from the account ID
+    // so local dev without the full secret set still works.
+    let endpoint = std::env::var("CLOUDFLARE_R2_ENDPOINT")
+        .unwrap_or_else(|_| format!("https://{account_id}.r2.cloudflarestorage.com"));
 
     let creds = Credentials::new(access_key, secret_key, None, None, "r2");
     let cfg = aws_sdk_s3::Config::builder()
