@@ -76,17 +76,36 @@ async fn send_rendered_email<T: Serialize>(
     let (html_body, text_body) =
         render_templates(html_name, html_template, text_name, text_template, data)?;
 
+    // Credential resolution: prefer GMAIL_USER / GMAIL_APP_PASSWORD,
+    // fall back to generic SMTP_USER / SMTP_PASS.
     let gmail_user = env::var("GMAIL_USER").unwrap_or_default();
     let gmail_password = env::var("GMAIL_APP_PASSWORD").unwrap_or_default();
-    if gmail_user.is_empty() || gmail_password.is_empty() {
+    let smtp_user = env::var("SMTP_USER").unwrap_or_default();
+    let smtp_pass = env::var("SMTP_PASS").unwrap_or_default();
+
+    let (from_addr, password) = if !gmail_user.is_empty() && !gmail_password.is_empty() {
+        (gmail_user, gmail_password)
+    } else if !smtp_user.is_empty() && !smtp_pass.is_empty() {
+        (smtp_user, smtp_pass)
+    } else {
+        // No credentials configured — log mock and return success.
         println!(
             "[Test/Mock Email] To: {} | Subject: {} | Body:\n{}",
             recipient_email, subject, text_body
         );
         return Ok(());
-    }
+    };
 
-    let sender = Mailbox::new(Some("BookIt Tickets".to_string()), gmail_user.parse()?);
+    // SMTP host / port from env.  Defaults: host=smtp.gmail.com, port=465.
+    // Port 465 = implicit TLS (SMTPS) which works even when cloud providers
+    // block port 587 (STARTTLS).  Set SMTP_PORT=587 to opt into STARTTLS.
+    let smtp_host = env::var("SMTP_HOST").unwrap_or_else(|_| "smtp.gmail.com".into());
+    let smtp_port: u16 = env::var("SMTP_PORT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(465);
+
+    let sender = Mailbox::new(Some("BookIt Tickets".to_string()), from_addr.parse()?);
     let email = Message::builder()
         .from(sender)
         .to(recipient_email.parse()?)
@@ -105,10 +124,25 @@ async fn send_rendered_email<T: Serialize>(
                 ),
         )?;
 
-    let mailer: AsyncSmtpTransport<Tokio1Executor> =
-        AsyncSmtpTransport::<Tokio1Executor>::relay("smtp.gmail.com")?
-            .credentials(Credentials::new(gmail_user, gmail_password))
-            .build();
+    let creds = Credentials::new(from_addr.clone(), password);
+
+    // Build the transport depending on the port.
+    // 465  → implicit TLS (SmtpsRelay)
+    // 587  → STARTTLS
+    // other → try implicit TLS
+    let mailer: AsyncSmtpTransport<Tokio1Executor> = if smtp_port == 587 {
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_host)?
+            .port(smtp_port)
+            .credentials(creds)
+            .build()
+    } else {
+        // 465 or custom — use implicit TLS (SMTPS)
+        AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp_host)?
+            .port(smtp_port)
+            .credentials(creds)
+            .build()
+    };
+
     mailer
         .send(email)
         .await
