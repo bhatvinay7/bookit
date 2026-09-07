@@ -10,6 +10,8 @@ pub struct Category {
     pub slug: String,
     pub description: Option<String>,
     pub image_url: Option<String>,
+    #[serde(default, with = "crate::models::bson_datetime::option_chrono_datetime_as_bson_datetime")]
     pub created_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "crate::models::bson_datetime::option_chrono_datetime_as_bson_datetime")]
     pub updated_at: Option<DateTime<Utc>>,
 }
