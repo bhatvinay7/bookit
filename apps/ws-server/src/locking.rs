@@ -109,7 +109,7 @@ pub async fn sync_locks_from_zset(
     };
 
     let now = chrono::Utc::now().timestamp();
-    let user_zset_key = format!("{}:{}", showtime_id, user_id);
+    let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
 
     let _: () = redis_cli
         .zrembyscore(&user_zset_key, "-inf", now)
@@ -142,7 +142,7 @@ pub async fn sync_room_state_snapshot(
         Err(_) => return (vec![], vec![]),
     };
 
-    let user_zset_key = format!("{}:{}", showtime_id, user_id);
+    let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
     let now = chrono::Utc::now().timestamp();
 
     let _: () = redis_cli
