@@ -54,7 +54,7 @@ impl IntoResponse for AppError {
                 tracing::error!("Internal error: {}", e);
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
-                    "An unexpected internal error occurred. Please try again later.".to_string(),
+                    e.to_string(),
                 )
             }
         };
