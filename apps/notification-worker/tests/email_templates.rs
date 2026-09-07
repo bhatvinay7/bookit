@@ -1,6 +1,4 @@
-use notification_worker::email::{
-    BookingEmailData, CancellationEmailData, render_templates,
-};
+use notification_worker::email::{BookingEmailData, CancellationEmailData, render_templates};
 
 #[test]
 fn booking_templates_render_html_and_text() {

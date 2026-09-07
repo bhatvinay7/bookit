@@ -2,7 +2,9 @@ use bigdecimal::BigDecimal;
 use bookit_db::{
     db::DbPool,
     models::{NewTicket, NewUserAudit, ScheduleSeat, Ticket},
-    schema::{schedule_seats::dsl as ss, schedules::dsl as sd, tickets::dsl as tk, user_audits::dsl as ua},
+    schema::{
+        schedule_seats::dsl as ss, schedules::dsl as sd, tickets::dsl as tk, user_audits::dsl as ua,
+    },
 };
 
 use diesel::prelude::*;
@@ -144,7 +146,6 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                         "seat_numbers": seat_labels
                     });
 
-
                     let http_server_url = env::var("HTTP_SERVER_URL")
                         .unwrap_or_else(|_| "http://127.0.0.1:8082".to_string());
                     let pdf_endpoint = format!(
@@ -178,10 +179,7 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                         Ok(res) => {
                             let status = res.status();
                             let body = res.text().await.unwrap_or_default();
-                            println!(
-                                "PDF generation API failed: HTTP {} — {}",
-                                status, body
-                            );
+                            println!("PDF generation API failed: HTTP {} — {}", status, body);
                             format!(
                                 "{}/tickets/default_ticket_{}.pdf",
                                 fallback_base, order_uuid
@@ -195,7 +193,6 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                             )
                         }
                     };
-
 
                     let tx_res: Result<(), diesel::result::Error> = db_conn.transaction(|conn| {
                         let new_ticket = NewTicket {

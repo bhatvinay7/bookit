@@ -97,10 +97,7 @@ async fn send_rendered_email<T: Serialize>(
         .and_then(|v| v.parse().ok())
         .unwrap_or(465);
 
-    let sender = Mailbox::new(
-        Some("BookIt Tickets".to_string()),
-        gmail_user.parse()?,
-    );
+    let sender = Mailbox::new(Some("BookIt Tickets".to_string()), gmail_user.parse()?);
     let email = Message::builder()
         .from(sender)
         .to(recipient_email.parse()?)
