@@ -93,7 +93,10 @@ export default function BookingWorkspacePage() {
         ];
 
         if (uid) {
-          calls.push(fetch(`${API_URL}/api/user/${uid}/tickets`));
+          const token = localStorage.getItem("user_token");
+          calls.push(fetch(`${API_URL}/api/user/me/tickets`, {
+            headers: token ? { Authorization: `Bearer ${token}` } : {},
+          }));
         }
 
         const [schedRes, seatsRes, ticketsRes] = await Promise.all(calls);
