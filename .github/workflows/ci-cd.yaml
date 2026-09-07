@@ -440,11 +440,7 @@ jobs:
           REDIS_CLUSTER_URLS: ${{ secrets.REDIS_CLUSTER_URLS }}
           REDIS_REMOTE_URL: ${{ secrets.REDIS_REMOTE_URL }}
           RABBITMQ_URL: ${{ secrets.RABBITMQ_URL }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           REPLICATION_URL: ${{ secrets.REPLICATION_URL }}
           SLOT_NAME: ${{ secrets.SLOT_NAME }}
