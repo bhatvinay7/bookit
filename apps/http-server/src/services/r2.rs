@@ -10,9 +10,11 @@ fn build_client() -> S3Client {
     let access_key = std::env::var("CLOUDFLARE_R2_ACCESS_KEY_ID").unwrap_or_default();
     let secret_key = std::env::var("CLOUDFLARE_R2_SECRET_ACCESS_KEY").unwrap_or_default();
 
-    // Always construct the S3 API endpoint from the account ID.
-    // This avoids issues where the user mistakenly sets CLOUDFLARE_R2_ENDPOINT to their public bucket URL.
-    let endpoint = format!("https://{account_id}.r2.cloudflarestorage.com");
+    // Allow overriding the endpoint url, else default to the cloudflare account specific domain.
+    let endpoint = std::env::var("CLOUDFLARE_R2_ENDPOINT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("https://{account_id}.r2.cloudflarestorage.com"));
 
     let creds = Credentials::new(access_key, secret_key, None, None, "r2");
     let cfg = aws_sdk_s3::Config::builder()

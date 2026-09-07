@@ -55,7 +55,12 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                         .or_else(|| payload["showtime_id"].as_i64())
                         .unwrap_or(0) as i32;
                     let seat_ids = parse_seat_ids(&payload);
-                    let amount_str = payload["amount"].as_str().unwrap_or("0");
+                    let amount_val = payload["amount"].clone();
+                    let amount_str = amount_val
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| amount_val.as_f64().map(|f| f.to_string()))
+                        .unwrap_or_else(|| "0".to_string());
 
                     let Ok(order_uuid) = Uuid::from_str(order_id_str) else {
                         println!(
@@ -142,8 +147,8 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                         "show_time": show_time,
                         "place": "Main Theater",
                         "venue": venue_name.clone(),
-                        "price": amount_str,
-                        "seat_numbers": seat_labels
+                        "price": &amount_str,
+                        "seat_numbers": seat_labels.clone()
                     });
 
                     let http_server_url = env::var("HTTP_SERVER_URL")
@@ -213,7 +218,8 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                             user_id: user_id_val,
                             action: "ticket_created".into(),
                             order_id: order_uuid,
-                            amount: BigDecimal::from_str(amount_str).unwrap_or(BigDecimal::from(0)),
+                            amount: BigDecimal::from_str(&amount_str)
+                                .unwrap_or(BigDecimal::from(0)),
                             details: json!({ "pdf_url": pdf_url, "seat_ids": seat_ids }),
                         };
                         diesel::insert_into(ua::user_audits)
@@ -225,13 +231,12 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
 
                     if tx_res.is_ok() {
                         let user_email = get_user_email(&mut db_conn, user_id_val);
-                        let seats = seat_ids.iter().map(ToString::to_string).collect::<Vec<_>>();
                         let email_data = BookingEmailData {
                             order_id: order_uuid.to_string(),
                             venue: venue_name,
                             show_time,
-                            seat_count: seats.len(),
-                            seats,
+                            seat_count: seat_labels.len(),
+                            seats: seat_labels,
                             amount: amount_str.to_string(),
                             ticket_url: pdf_url,
                             support_email: env::var("SUPPORT_EMAIL")
@@ -260,11 +265,29 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                     let order_id_str = payload["order_id"].as_str().unwrap_or_default();
                     let user_id_val = payload["user_id"].as_i64().unwrap_or(0) as i32;
                     let seat_ids = parse_seat_ids(&payload);
-                    let amount_str = payload["amount"].as_str().unwrap_or("0");
+                    let amount_val = payload["amount"].clone();
+                    let amount_str = amount_val
+                        .as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| amount_val.as_f64().map(|f| f.to_string()))
+                        .unwrap_or_else(|| "0".to_string());
 
                     if let Ok(mut db_conn) = db_pool.get() {
                         let user_email = get_user_email(&mut db_conn, user_id_val);
-                        let seats = seat_ids.iter().map(ToString::to_string).collect::<Vec<_>>();
+                        let seat_labels: Vec<String> = {
+                            ss::schedule_seats
+                                .filter(ss::id.eq_any(&seat_ids))
+                                .load::<ScheduleSeat>(&mut db_conn)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|s| format!("{}{}", s.row_letter, s.seat_number))
+                                .collect()
+                        };
+                        let seats = if seat_labels.is_empty() {
+                            seat_ids.iter().map(ToString::to_string).collect::<Vec<_>>()
+                        } else {
+                            seat_labels
+                        };
                         let email_data = CancellationEmailData {
                             order_id: order_id_str.to_string(),
                             seat_count: seats.len(),
