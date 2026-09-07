@@ -23,7 +23,7 @@ export function ZoomToolbar({
     <motion.div
       drag
       dragMomentum={false}
-      className="absolute z-50 flex items-center gap-1 bg-white/30 dark:bg-slate-800/50 backdrop-blur-xl px-3 py-1.5 rounded-full border border-black/10 dark:border-white/10 text-xs font-semibold text-[var(--text-secondary)] shadow-lg cursor-grab active:cursor-grabbing select-none"
+      className="booking-zoom-toolbar absolute z-50 flex items-center gap-1 bg-white/30 dark:bg-slate-800/50 backdrop-blur-xl px-3 py-1.5 rounded-full border border-black/10 dark:border-white/10 text-xs font-semibold text-[var(--text-secondary)] shadow-lg cursor-grab active:cursor-grabbing select-none"
       style={{ top: 20, right: 20 }}
       initial={{ opacity: 0, y: -10 }}
       animate={{ opacity: 1, y: 0 }}

@@ -2,10 +2,10 @@
 
 export function SeatLegend() {
   const items = [
-    { color: "#10B981", border: "1px solid #059669", label: "Booked / Locked by You" },
+    { color: "var(--seat-owned-bg, #10B981)", border: "1px solid var(--seat-owned-border, #059669)", label: "Booked / Locked by You" },
     { color: "#334155", border: "1px solid #475569", opacity: 0.7, label: "Booked by Other (Not Selectable)" },
-    { color: "#FEF08A", border: "1.5px solid #EAB308", label: "Processing Lock (5 Min Hold)" },
-    { color: "linear-gradient(135deg, #8B5CF6, #6D28D9)", border: "1px solid #7C3AED", label: "Your Selection" },
+    { color: "var(--seat-held-bg, #FEF08A)", border: "1.5px solid var(--seat-held-border, #EAB308)", label: "Processing Lock (5 Min Hold)" },
+    { color: "var(--seat-picked-bg, linear-gradient(135deg, #8B5CF6, #6D28D9))", border: "1px solid var(--seat-picked-border, #7C3AED)", label: "Your Selection" },
   ];
 
   return (

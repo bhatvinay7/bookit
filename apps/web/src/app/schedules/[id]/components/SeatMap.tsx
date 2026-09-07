@@ -85,7 +85,7 @@ export function SeatMap({ showType, seatTiers, picked, onToggleSeat }: SeatMapPr
 
   return (
     <div className="flex-1 min-w-0 w-full">
-      <div ref={containerRef} className="glass card-shadow rounded-3xl p-6 overflow-x-auto relative">
+      <div ref={containerRef} className="booking-panel glass card-shadow rounded-3xl p-6 overflow-x-auto relative">
 
         {/* Movable Zoom Toolbar */}
         <ZoomToolbar

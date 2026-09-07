@@ -333,3 +333,77 @@ body {
     transparent 100%
   );
 }
+
+/* Booking surfaces follow the app's explicit theme, not the OS preference. */
+[data-dark='true'] .booking-panel {
+  --text-primary: #e2e8f0;
+  --text-secondary: #b6c0cf;
+  --text-muted: #9aa8bc;
+  --border: #2b3548;
+  --seat-owned-bg: #16634f;
+  --seat-owned-border: #348c72;
+  --seat-held-bg: #443820;
+  --seat-held-text: #e4cf9c;
+  --seat-held-border: #927744;
+  --seat-held-shadow: none;
+  --seat-picked-bg: #6042a0;
+  --seat-picked-border: #a18aca;
+  --seat-tier-text: #cbd5e1;
+  background: #111827;
+  border: 1px solid var(--border);
+  color: var(--text-primary);
+  box-shadow: 0 12px 32px rgb(0 0 0 / 20%);
+}
+
+[data-dark='true'] .booking-panel .booking-ticket-row {
+  background: #1b2435;
+}
+
+[data-dark='true'] .booking-panel .seat-available {
+  background: #202b3e;
+  border-color: #64718b;
+  color: #d4dbe6;
+}
+
+[data-dark='true'] .booking-panel .seat-available:hover {
+  background: #34304c;
+  border-color: #a18aca;
+}
+
+[data-dark='true'] .booking-panel .seat-available.seat-premium {
+  background: #302b23;
+  border-color: #86724c;
+  color: #ded2ba;
+}
+
+[data-dark='true'] .booking-panel .seat-available.seat-premium:hover {
+  background: #433927;
+  border-color: #bba16c;
+}
+
+[data-dark='true'] .booking-panel .btn-primary {
+  background: #6042a0;
+  color: #ece8f4;
+  box-shadow: none;
+}
+
+[data-dark='true'] .booking-panel .btn-primary:hover {
+  background: #7152b3;
+}
+
+[data-dark='true'] .booking-panel button:disabled:not(.seat) {
+  background: #263145;
+  color: #a8b3c5;
+  box-shadow: none;
+}
+
+[data-dark='true'] .booking-panel button:focus-visible {
+  outline: 2px solid #c4b5fd;
+  outline-offset: 3px;
+}
+
+[data-dark='true'] .booking-panel .booking-zoom-toolbar {
+  background: #1b2435;
+  border-color: var(--border);
+  color: var(--text-secondary);
+}

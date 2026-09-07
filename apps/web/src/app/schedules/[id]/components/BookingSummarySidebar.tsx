@@ -49,7 +49,7 @@ export function BookingSummarySidebar({
 
   return (
     <div className="w-full lg:w-[360px] shrink-0 flex flex-col gap-6">
-      <div className="glass card-shadow rounded-3xl p-6 flex flex-col max-h-[80vh] sticky top-8">
+      <div className="booking-panel glass card-shadow rounded-3xl p-6 flex flex-col max-h-[80vh] sticky top-8">
         <h2 className="text-xl font-black font-display text-[var(--text-primary)] tracking-tight mb-1">
           Booking Summary
         </h2>
@@ -78,7 +78,7 @@ export function BookingSummarySidebar({
                     initial={{ opacity: 0, scale: 0.95 }}
                     animate={{ opacity: 1, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.95, height: 0, marginTop: 0 }}
-                    className="flex items-center justify-between p-3.5 bg-white/40 dark:bg-black/20 border border-[var(--border)] rounded-xl"
+                    className="booking-ticket-row flex items-center justify-between p-3.5 bg-white/40 dark:bg-black/20 border border-[var(--border)] rounded-xl"
                   >
                     <div className="flex flex-col">
                       <span className="text-sm font-black text-[var(--text-primary)]">

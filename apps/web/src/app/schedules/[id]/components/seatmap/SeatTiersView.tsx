@@ -22,7 +22,7 @@ export function SeatTiersView({ seatTiers, picked, onToggleSeat }: SeatTiersView
           >
             <span
               className="text-[10px] font-bold uppercase tracking-wider"
-              style={{ color: tier.color }}
+              style={{ color: `var(--seat-tier-text, ${tier.color})` }}
             >
               {tier.name}
             </span>

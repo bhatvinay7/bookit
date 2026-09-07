@@ -25,20 +25,20 @@ export function SeatButton({ seat, tier, picked, onToggleSeat }: SeatButtonProps
   if (isMyBooked) {
     seatCls += "seat-selected";
     seatStyle = {
-      background: "#10B981",
+      background: "var(--seat-owned-bg, #10B981)",
       color: "#ffffff",
-      border: "1px solid #059669",
+      border: "1px solid var(--seat-owned-border, #059669)",
       cursor: "default",
     };
     disabled = true;
   } else if (isMyLocked) {
     seatCls += "seat-selected";
     seatStyle = {
-      background: "#FEF08A",
-      color: "#854D0E",
-      border: "2px solid #EAB308",
+      background: "var(--seat-held-bg, #FEF08A)",
+      color: "var(--seat-held-text, #854D0E)",
+      border: "2px solid var(--seat-held-border, #EAB308)",
       cursor: "pointer",
-      boxShadow: "0 0 10px rgba(234, 179, 8, 0.4)",
+      boxShadow: "var(--seat-held-shadow, 0 0 10px rgba(234, 179, 8, 0.4))",
     };
     disabled = false;
   } else if (isBookedOther) {
@@ -53,9 +53,9 @@ export function SeatButton({ seat, tier, picked, onToggleSeat }: SeatButtonProps
     disabled = true;
   } else if (isLocked) {
     seatStyle = {
-      background: "#FEF08A",
-      color: "#854D0E",
-      border: "1.5px solid #EAB308",
+      background: "var(--seat-held-bg, #FEF08A)",
+      color: "var(--seat-held-text, #854D0E)",
+      border: "1.5px solid var(--seat-held-border, #EAB308)",
       cursor: "not-allowed",
       fontWeight: "bold",
     };
@@ -63,9 +63,9 @@ export function SeatButton({ seat, tier, picked, onToggleSeat }: SeatButtonProps
   } else if (isPicked) {
     seatCls += "seat-selected";
     seatStyle = {
-      background: "linear-gradient(135deg, #8B5CF6, #6D28D9)",
+      background: "var(--seat-picked-bg, linear-gradient(135deg, #8B5CF6, #6D28D9))",
       color: "#ffffff",
-      border: "1px solid #7C3AED",
+      border: "1px solid var(--seat-picked-border, #7C3AED)",
     };
   } else {
     seatCls += "seat-available";
