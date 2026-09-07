@@ -28,9 +28,9 @@ pub fn cache_schedules_active_key() -> String {
     "cache:schedules:active".to_string()
 }
 
-pub const CACHE_SHOWS: &str = "cache:shows:all";
-pub const CACHE_DASHBOARD_GRID: &str = "cache:dashboard:grid";
-pub const MOVIES_ALL: &str = "cache:movies:all";
+pub const CACHE_SHOWS: &str = "cache:shows:all:v2";
+pub const CACHE_DASHBOARD_GRID: &str = "cache:dashboard:grid:v2";
+pub const MOVIES_ALL: &str = "cache:movies:all:v2";
 
 /// Get the Redis key for shows that have active schedules, optionally scoped
 /// by show type and schedule city.
