@@ -71,7 +71,21 @@ pub async fn declare_topology(channel: &Channel) -> Result<()> {
 pub async fn publish(channel: &Channel, event: &ClaimedEvent) -> Result<()> {
     let route = route_for(&event.event_type)
         .ok_or_else(|| anyhow!("unsupported outbox event type {}", event.event_type))?;
-    let body = serde_json::to_vec(&event.payload)?;
+    // For fanout (booking_events) events, inject event_type into the body so
+    // consumers can inspect it without parsing AMQP headers. The raw payload
+    // from the outbox only contains domain fields (order_id, user_id, …).
+    let body = if route.exchange == "booking_events_exchange" {
+        let mut wrapped = event.payload.clone();
+        if let Some(obj) = wrapped.as_object_mut() {
+            obj.insert(
+                "event_type".into(),
+                serde_json::Value::String(event.event_type.clone()),
+            );
+        }
+        serde_json::to_vec(&wrapped)?
+    } else {
+        serde_json::to_vec(&event.payload)?
+    };
     let mut properties = BasicProperties::default()
         .with_delivery_mode(2)
         .with_message_id(event.id.to_string().into())
@@ -81,12 +95,19 @@ pub async fn publish(channel: &Channel, event: &ClaimedEvent) -> Result<()> {
             parse_payment_message_ttl(std::env::var("PAYMENT_MESSAGE_TTL_MS").ok().as_deref());
         properties = properties.with_expiration(ttl.to_string().into());
     }
+    // Use mandatory=false for fanout (booking_events_exchange) publishes.
+    // A fanout exchange with no consumers bound is not an error; messages are
+    // simply discarded until a consumer declares its queue and binds it.
+    // mandatory=true would cause RabbitMQ to return the message as unroutable
+    // whenever the notification-worker hasn't connected yet, permanently
+    // dead-lettering the OrderCompleted event.
+    let is_fanout = route.exchange == "booking_events_exchange";
     let confirmation = channel
         .basic_publish(
             route.exchange.into(),
             route.routing_key.into(),
             BasicPublishOptions {
-                mandatory: true,
+                mandatory: !is_fanout,
                 ..Default::default()
             },
             &body,
