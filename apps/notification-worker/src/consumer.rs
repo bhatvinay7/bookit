@@ -85,18 +85,51 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                         }
                     };
 
-                    // Check idempotency: Never duplicate the ticket!
-                    let existing_ticket: Option<Ticket> = tk::tickets
+                    // Ticket creation and email delivery have separate completion states.
+                    let existing_ticket = match tk::tickets
                         .filter(tk::order_id.eq(order_uuid))
-                        .first(&mut db_conn)
+                        .first::<Ticket>(&mut db_conn)
                         .optional()
-                        .unwrap_or(None);
-
-                    if existing_ticket.is_some() {
-                        println!(
-                            "Ticket for order {} already exists! Idempotent skip.",
-                            order_uuid
-                        );
+                    {
+                        Ok(ticket) => ticket,
+                        Err(error) => {
+                            eprintln!("Ticket lookup failed: {}", error);
+                            let _ = delivery
+                                .nack(BasicNackOptions {
+                                    multiple: false,
+                                    requeue: false,
+                                })
+                                .await;
+                            continue;
+                        }
+                    };
+                    let email_sent = ua::user_audits
+                        .filter(ua::order_id.eq(order_uuid))
+                        .filter(ua::action.eq("booking_email_sent"))
+                        .select(ua::id)
+                        .first::<Uuid>(&mut db_conn)
+                        .optional();
+                    match email_sent {
+                        Ok(Some(_)) => {
+                            let _ = delivery.ack(BasicAckOptions::default()).await;
+                            continue;
+                        }
+                        Err(error) => {
+                            eprintln!("Email delivery lookup failed: {}", error);
+                            let _ = delivery
+                                .nack(BasicNackOptions {
+                                    multiple: false,
+                                    requeue: false,
+                                })
+                                .await;
+                            continue;
+                        }
+                        Ok(None) => {}
+                    }
+                    if existing_ticket
+                        .as_ref()
+                        .is_some_and(|ticket| ticket.status != "active")
+                    {
                         let _ = delivery.ack(BasicAckOptions::default()).await;
                         continue;
                     }
@@ -158,48 +191,38 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                         http_server_url.trim_end_matches('/')
                     );
 
-                    let http_client = reqwest::Client::new();
-                    let pdf_url_res = http_client
-                        .post(&pdf_endpoint)
-                        .json(&pdf_req_body)
-                        .send()
-                        .await;
-
-                    let fallback_base = env::var("CLOUDFLARE_R2_PUBLIC_URL")
-                        .or_else(|_| env::var("NEXT_PUBLIC_R2_PUBLIC_URL"))
-                        .unwrap_or_else(|_| "https://thepipe.shop".to_string());
-                    let fallback_base = fallback_base.trim_end_matches('/');
-
-                    let pdf_url = match pdf_url_res {
-                        Ok(res) if res.status().is_success() => {
-                            if let Ok(json_res) = res.json::<serde_json::Value>().await {
-                                json_res["pdf_url"]
-                                    .as_str()
-                                    .unwrap_or(&format!("{}/tickets/default.pdf", fallback_base))
-                                    .to_string()
-                            } else {
-                                format!("{}/tickets/default.pdf", fallback_base)
+                    let existing_pdf = existing_ticket
+                        .as_ref()
+                        .map(|ticket| ticket.pdf_url.as_str())
+                        .filter(|url| valid_pdf_url(url));
+                    let pdf_url = if let Some(url) = existing_pdf {
+                        url.to_string()
+                    } else {
+                        match generate_pdf(&pdf_endpoint, &pdf_req_body).await {
+                            Ok(url) => url,
+                            Err(error) => {
+                                eprintln!(
+                                    "PDF generation failed for order {}: {}; routing to DLQ",
+                                    order_uuid, error
+                                );
+                                let _ = delivery
+                                    .nack(BasicNackOptions {
+                                        multiple: false,
+                                        requeue: false,
+                                    })
+                                    .await;
+                                continue;
                             }
-                        }
-                        Ok(res) => {
-                            let status = res.status();
-                            let body = res.text().await.unwrap_or_default();
-                            println!("PDF generation API failed: HTTP {} — {}", status, body);
-                            format!(
-                                "{}/tickets/default_ticket_{}.pdf",
-                                fallback_base, order_uuid
-                            )
-                        }
-                        Err(e) => {
-                            println!("PDF generation API request error: {}", e);
-                            format!(
-                                "{}/tickets/default_ticket_{}.pdf",
-                                fallback_base, order_uuid
-                            )
                         }
                     };
 
                     let tx_res: Result<(), diesel::result::Error> = db_conn.transaction(|conn| {
+                        if let Some(ticket) = &existing_ticket {
+                            diesel::update(tk::tickets.find(ticket.id))
+                                .set(tk::pdf_url.eq(&pdf_url))
+                                .execute(conn)?;
+                            return Ok(());
+                        }
                         let new_ticket = NewTicket {
                             id: Uuid::new_v4(),
                             order_id: order_uuid,
@@ -246,13 +269,43 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                             send_booking_confirmation(&user_email, &email_data).await
                         {
                             eprintln!("Booking email failed for order {}: {}", order_uuid, error);
-                            println!("Ticket generated but email failed for order {}", order_uuid);
-                        } else {
-                            println!(
-                                "Ticket generated and email sent successfully for order {}",
-                                order_uuid
-                            );
+                            let _ = delivery
+                                .nack(BasicNackOptions {
+                                    multiple: false,
+                                    requeue: false,
+                                })
+                                .await;
+                            continue;
                         }
+                        let audit = NewUserAudit {
+                            id: Uuid::new_v4(),
+                            user_id: user_id_val,
+                            action: "booking_email_sent".into(),
+                            order_id: order_uuid,
+                            amount: BigDecimal::from_str(&amount_str)
+                                .unwrap_or(BigDecimal::from(0)),
+                            details: json!({ "ticket_url": email_data.ticket_url }),
+                        };
+                        if let Err(error) = diesel::insert_into(ua::user_audits)
+                            .values(&audit)
+                            .execute(&mut db_conn)
+                        {
+                            eprintln!(
+                                "Email sent but delivery audit failed for {}: {}",
+                                order_uuid, error
+                            );
+                            let _ = delivery
+                                .nack(BasicNackOptions {
+                                    multiple: false,
+                                    requeue: false,
+                                })
+                                .await;
+                            continue;
+                        }
+                        println!(
+                            "Ticket generated and email sent successfully for order {}",
+                            order_uuid
+                        );
                         let _ = delivery.ack(BasicAckOptions::default()).await;
                     } else {
                         println!("Failed to insert ticket into database, sending to DLQ");
@@ -305,7 +358,22 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                                 "Cancellation email failed for order {}: {}",
                                 order_id_str, error
                             );
+                            let _ = delivery
+                                .nack(BasicNackOptions {
+                                    multiple: false,
+                                    requeue: false,
+                                })
+                                .await;
+                            continue;
                         }
+                    } else {
+                        let _ = delivery
+                            .nack(BasicNackOptions {
+                                multiple: false,
+                                requeue: false,
+                            })
+                            .await;
+                        continue;
                     }
 
                     let _ = delivery.ack(BasicAckOptions::default()).await;
@@ -321,6 +389,69 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                     })
                     .await;
             }
+        }
+    }
+}
+
+fn valid_pdf_url(value: &str) -> bool {
+    reqwest::Url::parse(value).is_ok_and(|url| {
+        matches!(url.scheme(), "http" | "https")
+            && url.host_str().is_some()
+            && !url.path().contains("/tickets/default")
+    })
+}
+
+async fn generate_pdf(endpoint: &str, body: &serde_json::Value) -> Result<String, anyhow::Error> {
+    let response = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(60))
+        .build()?
+        .post(endpoint)
+        .json(body)
+        .send()
+        .await?
+        .error_for_status()?;
+    let json: serde_json::Value = response.json().await?;
+    let url = json["pdf_url"]
+        .as_str()
+        .filter(|value| valid_pdf_url(value))
+        .ok_or_else(|| anyhow::anyhow!("PDF API returned no valid ticket URL"))?;
+    Ok(url.to_string())
+}
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+    #[test]
+    fn legacy_fallbacks_are_not_successful_uploads() {
+        assert!(!valid_pdf_url("https://example.com/tickets/default.pdf"));
+        assert!(!valid_pdf_url(
+            "https://example.com/tickets/default_ticket_order.pdf"
+        ));
+        assert!(!valid_pdf_url(""));
+        assert!(!valid_pdf_url("file:///ticket.pdf"));
+        assert!(valid_pdf_url(
+            "https://example.com/tickets/123-ticket_order.pdf"
+        ));
+    }
+
+    #[tokio::test]
+    async fn failed_pdf_api_never_returns_a_fabricated_ticket_url() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for body in [
+            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
+            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}",
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let endpoint = format!("http://{}", listener.local_addr().unwrap());
+            let server = tokio::spawn(async move {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut request = [0; 4096];
+                socket.read(&mut request).await.unwrap();
+                socket.write_all(body.as_bytes()).await.unwrap();
+            });
+            assert!(generate_pdf(&endpoint, &json!({})).await.is_err());
+            server.await.unwrap();
         }
     }
 }

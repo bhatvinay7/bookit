@@ -425,7 +425,7 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           SMTP_HOST: ${{ secrets.SMTP_HOST || 'smtp.gmail.com' }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT || '587' }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT || '465' }}
           SMTP_PASS: ${{ secrets.SMTP_PASS || secrets.GMAIL_APP_PASSWORD }}
           SMTP_USER: ${{ secrets.SMTP_USER || secrets.GMAIL_USER }}
           SUPPORT_EMAIL: ${{ secrets.SUPPORT_EMAIL }}

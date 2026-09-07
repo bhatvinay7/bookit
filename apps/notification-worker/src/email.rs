@@ -76,28 +76,11 @@ async fn send_rendered_email<T: Serialize>(
     let (html_body, text_body) =
         render_templates(html_name, html_template, text_name, text_template, data)?;
 
-    // Credential resolution: GMAIL_USER / GMAIL_APP_PASSWORD required.
-    let gmail_user = env::var("GMAIL_USER").unwrap_or_default();
-    let gmail_password = env::var("GMAIL_APP_PASSWORD").unwrap_or_default();
-
-    if gmail_user.is_empty() || gmail_password.is_empty() {
-        println!(
-            "[Mock Email] To: {} | Subject: {} | Body:\n{}",
-            recipient_email, subject, text_body
-        );
+    if env::var("APP_MODE").as_deref() == Ok("test") {
         return Ok(());
     }
-
-    // SMTP_HOST / SMTP_PORT override via env for flexibility.
-    // Default: smtp.gmail.com:465 (implicit TLS / SMTPS).
-    // Set SMTP_PORT=587 in the deployment env to use STARTTLS instead.
-    let smtp_host = env::var("SMTP_HOST").unwrap_or_else(|_| "smtp.gmail.com".into());
-    let smtp_port: u16 = env::var("SMTP_PORT")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(465);
-
-    let sender = Mailbox::new(Some("BookIt Tickets".to_string()), gmail_user.parse()?);
+    let config = SmtpConfig::from_lookup(|key| env::var(key).ok())?;
+    let sender = Mailbox::new(Some("BookIt Tickets".to_string()), config.from.parse()?);
     let email = Message::builder()
         .from(sender)
         .to(recipient_email.parse()?)
@@ -116,26 +99,28 @@ async fn send_rendered_email<T: Serialize>(
                 ),
         )?;
 
-    let creds = Credentials::new(gmail_user.clone(), gmail_password);
-
-    // Port 587 → STARTTLS ; 465 (default) or any other → implicit TLS (SMTPS).
-    // Cloud providers commonly block 587 but 465 is less often restricted.
-    let mailer: AsyncSmtpTransport<Tokio1Executor> = if smtp_port == 587 {
-        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&smtp_host)?
-            .port(smtp_port)
-            .credentials(creds)
-            .build()
+    let creds = Credentials::new(config.user, config.password);
+    let builder = if config.secure {
+        AsyncSmtpTransport::<Tokio1Executor>::relay(&config.host)?
     } else {
-        AsyncSmtpTransport::<Tokio1Executor>::relay(&smtp_host)?
-            .port(smtp_port)
-            .credentials(creds)
-            .build()
+        AsyncSmtpTransport::<Tokio1Executor>::starttls_relay(&config.host)?
     };
-
-    mailer
-        .send(email)
+    let mailer = builder
+        .port(config.port)
+        .timeout(Some(std::time::Duration::from_secs(15)))
+        .credentials(creds)
+        .build();
+    tokio::time::timeout(std::time::Duration::from_secs(60), mailer.send(email))
         .await
-        .map_err(|error| anyhow::anyhow!("SMTP send error: {}", error))?;
+        .map_err(|_| anyhow::anyhow!("SMTP delivery timed out at {}:{}", config.host, config.port))?
+        .map_err(|error| {
+            anyhow::anyhow!(
+                "SMTP send failed at {}:{}: {}. Check pod DNS and outbound SMTP connectivity",
+                config.host,
+                config.port,
+                error
+            )
+        })?;
 
     println!("Email sent successfully to {}", recipient_email);
     Ok(())
@@ -155,4 +140,114 @@ pub fn render_templates<T: Serialize>(
     let html_body = handlebars.render(html_name, data)?;
     let text_body = handlebars.render(text_name, data)?;
     Ok((html_body, text_body))
+}
+
+struct SmtpConfig {
+    host: String,
+    port: u16,
+    secure: bool,
+    user: String,
+    password: String,
+    from: String,
+}
+
+impl SmtpConfig {
+    fn from_lookup(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, anyhow::Error> {
+        let value =
+            |key: &str| lookup(key).filter(|v| !v.trim().is_empty() && v != "\"\"" && v != "''");
+        let smtp_user = value("SMTP_USER");
+        let smtp_pass = value("SMTP_PASS");
+        let (user, password) = match (smtp_user, smtp_pass) {
+            (Some(user), Some(pass)) => (user, pass),
+            (None, None) => (
+                value("GMAIL_USER")
+                    .ok_or_else(|| anyhow::anyhow!("SMTP_USER or GMAIL_USER is required"))?,
+                value("GMAIL_APP_PASSWORD").ok_or_else(|| {
+                    anyhow::anyhow!("SMTP_PASS or GMAIL_APP_PASSWORD is required")
+                })?,
+            ),
+            _ => anyhow::bail!("SMTP_USER and SMTP_PASS must be configured together"),
+        };
+        let host = value("SMTP_HOST").unwrap_or_else(|| "smtp.gmail.com".into());
+        let port = value("SMTP_PORT")
+            .unwrap_or_else(|| "465".into())
+            .parse::<u16>()
+            .map_err(|_| anyhow::anyhow!("SMTP_PORT must be a valid port"))?;
+        anyhow::ensure!(port != 0, "SMTP_PORT must be nonzero");
+        let secure = match value("SMTP_SECURE").as_deref() {
+            None => port == 465,
+            Some("true") => true,
+            Some("false") => false,
+            _ => anyhow::bail!("SMTP_SECURE must be true or false"),
+        };
+        anyhow::ensure!(
+            port != 465 || secure,
+            "SMTP port 465 requires SMTP_SECURE=true"
+        );
+        anyhow::ensure!(
+            port != 587 || !secure,
+            "SMTP port 587 requires SMTP_SECURE=false (STARTTLS)"
+        );
+        let from = value("SMTP_FROM").unwrap_or_else(|| user.clone());
+        Ok(Self {
+            host,
+            port,
+            secure,
+            user,
+            password,
+            from,
+        })
+    }
+}
+
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+    fn config(pairs: &[(&str, &str)]) -> Result<SmtpConfig, anyhow::Error> {
+        SmtpConfig::from_lookup(|key| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.to_string())
+        })
+    }
+    #[test]
+    fn gmail_defaults_to_implicit_tls() {
+        let c = config(&[
+            ("GMAIL_USER", "sender@example.com"),
+            ("GMAIL_APP_PASSWORD", "password"),
+        ])
+        .unwrap();
+        assert_eq!(c.port, 465);
+        assert!(c.secure);
+    }
+    #[test]
+    fn smtp_credentials_and_sender_override_gmail() {
+        let c = config(&[
+            ("SMTP_USER", "smtp-user"),
+            ("SMTP_PASS", "smtp-password"),
+            ("SMTP_FROM", "sender@example.com"),
+            ("SMTP_HOST", "mail.example.com"),
+            ("SMTP_PORT", "587"),
+            ("SMTP_SECURE", "false"),
+        ])
+        .unwrap();
+        assert_eq!(c.user, "smtp-user");
+        assert_eq!(c.from, "sender@example.com");
+        assert!(!c.secure);
+    }
+    #[test]
+    fn rejects_missing_credentials_and_mismatched_tls() {
+        assert!(config(&[]).is_err());
+        assert!(config(&[("SMTP_USER", "user"), ("GMAIL_APP_PASSWORD", "pass")]).is_err());
+        assert!(
+            config(&[
+                ("SMTP_USER", "user"),
+                ("SMTP_PASS", "pass"),
+                ("SMTP_PORT", "465"),
+                ("SMTP_SECURE", "false")
+            ])
+            .is_err()
+        );
+    }
 }
