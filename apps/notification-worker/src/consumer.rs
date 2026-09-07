@@ -1,9 +1,10 @@
 use bigdecimal::BigDecimal;
 use bookit_db::{
     db::DbPool,
-    models::{NewTicket, NewUserAudit, Ticket},
-    schema::{schedules::dsl as sd, tickets::dsl as tk, user_audits::dsl as ua},
+    models::{NewTicket, NewUserAudit, ScheduleSeat, Ticket},
+    schema::{schedule_seats::dsl as ss, schedules::dsl as sd, tickets::dsl as tk, user_audits::dsl as ua},
 };
+
 use diesel::prelude::*;
 use futures::StreamExt;
 use lapin::{
@@ -115,20 +116,34 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                         })
                         .unwrap_or_else(|| "See your ticket for schedule details".into());
 
-                    // Call http-server PDF generation API
-                    let seat_numbers_str: Vec<String> =
-                        seat_ids.iter().map(|id| id.to_string()).collect();
+                    // Build seat labels (e.g. "A1", "B3") from the DB so the
+                    // PDF shows human-readable seat names, not raw IDs.
+                    let seat_labels: Vec<String> = {
+                        let mut conn_opt = db_pool.get().ok();
+                        if let Some(ref mut conn) = conn_opt {
+                            ss::schedule_seats
+                                .filter(ss::id.eq_any(&seat_ids))
+                                .load::<ScheduleSeat>(conn)
+                                .unwrap_or_default()
+                                .into_iter()
+                                .map(|s| format!("{}{}", s.row_letter, s.seat_number))
+                                .collect()
+                        } else {
+                            seat_ids.iter().map(|id| id.to_string()).collect()
+                        }
+                    };
 
                     let pdf_req_body = json!({
                         "order_id": order_uuid.to_string(),
                         "user_id": user_id_val,
                         "show_name": "BookIt Show Ticket",
-                        "show_time": "Scheduled Time",
+                        "show_time": show_time,
                         "place": "Main Theater",
-                            "venue": venue_name.clone(),
+                        "venue": venue_name.clone(),
                         "price": amount_str,
-                        "seat_numbers": seat_numbers_str
+                        "seat_numbers": seat_labels
                     });
+
 
                     let http_server_url = env::var("HTTP_SERVER_URL")
                         .unwrap_or_else(|_| "http://127.0.0.1:8082".to_string());
@@ -144,25 +159,43 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                         .send()
                         .await;
 
+                    let fallback_base = env::var("CLOUDFLARE_R2_PUBLIC_URL")
+                        .or_else(|_| env::var("NEXT_PUBLIC_R2_PUBLIC_URL"))
+                        .unwrap_or_else(|_| "https://thepipe.shop".to_string());
+                    let fallback_base = fallback_base.trim_end_matches('/');
+
                     let pdf_url = match pdf_url_res {
                         Ok(res) if res.status().is_success() => {
                             if let Ok(json_res) = res.json::<serde_json::Value>().await {
                                 json_res["pdf_url"]
                                     .as_str()
-                                    .unwrap_or("https://thepipe.shop/tickets/default.pdf")
+                                    .unwrap_or(&format!("{}/tickets/default.pdf", fallback_base))
                                     .to_string()
                             } else {
-                                "https://thepipe.shop/tickets/default.pdf".to_string()
+                                format!("{}/tickets/default.pdf", fallback_base)
                             }
                         }
-                        _ => {
-                            println!("PDF generation API failed, falling back to default PDF.");
+                        Ok(res) => {
+                            let status = res.status();
+                            let body = res.text().await.unwrap_or_default();
+                            println!(
+                                "PDF generation API failed: HTTP {} — {}",
+                                status, body
+                            );
                             format!(
-                                "https://thepipe.shop/tickets/default_ticket_{}.pdf",
-                                order_uuid
+                                "{}/tickets/default_ticket_{}.pdf",
+                                fallback_base, order_uuid
+                            )
+                        }
+                        Err(e) => {
+                            println!("PDF generation API request error: {}", e);
+                            format!(
+                                "{}/tickets/default_ticket_{}.pdf",
+                                fallback_base, order_uuid
                             )
                         }
                     };
+
 
                     let tx_res: Result<(), diesel::result::Error> = db_conn.transaction(|conn| {
                         let new_ticket = NewTicket {
