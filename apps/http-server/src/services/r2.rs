@@ -11,9 +11,10 @@ fn build_client() -> S3Client {
     let secret_key = std::env::var("CLOUDFLARE_R2_SECRET_ACCESS_KEY").unwrap_or_default();
 
     // Allow overriding the endpoint url, else default to the cloudflare account specific domain.
+    // If the user mistakenly supplied their public bucket URL here, fallback to the correct S3 endpoint.
     let endpoint = std::env::var("CLOUDFLARE_R2_ENDPOINT")
         .ok()
-        .filter(|s| !s.is_empty())
+        .filter(|s| !s.is_empty() && s.contains("r2.cloudflarestorage.com"))
         .unwrap_or_else(|| format!("https://{account_id}.r2.cloudflarestorage.com"));
 
     let creds = Credentials::new(access_key, secret_key, None, None, "r2");

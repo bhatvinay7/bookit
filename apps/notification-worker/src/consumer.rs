@@ -246,12 +246,14 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                             send_booking_confirmation(&user_email, &email_data).await
                         {
                             eprintln!("Booking email failed for order {}: {}", order_uuid, error);
+                            println!("Ticket generated but email failed for order {}", order_uuid);
+                        } else {
+                            println!(
+                                "Ticket generated and email sent successfully for order {}",
+                                order_uuid
+                            );
                         }
                         let _ = delivery.ack(BasicAckOptions::default()).await;
-                        println!(
-                            "Ticket generated and email sent successfully for order {}",
-                            order_uuid
-                        );
                     } else {
                         println!("Failed to insert ticket into database, sending to DLQ");
                         let _ = delivery
