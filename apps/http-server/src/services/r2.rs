@@ -9,11 +9,13 @@ fn build_client() -> S3Client {
     let account_id = std::env::var("CLOUDFLARE_R2_ACCOUNT_ID").unwrap_or_default();
     let access_key = std::env::var("CLOUDFLARE_R2_ACCESS_KEY_ID").unwrap_or_default();
     let secret_key = std::env::var("CLOUDFLARE_R2_SECRET_ACCESS_KEY").unwrap_or_default();
-    // Prefer the explicit endpoint from env (set in sealed secrets as
-    // CLOUDFLARE_R2_ENDPOINT). Fall back to constructing it from the account ID
-    // so local dev without the full secret set still works.
+
+    // Prefer the explicit endpoint from env (set in sealed secrets).
+    // If it's missing or empty, fall back to constructing it from the account ID.
     let endpoint = std::env::var("CLOUDFLARE_R2_ENDPOINT")
-        .unwrap_or_else(|_| format!("https://{account_id}.r2.cloudflarestorage.com"));
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| format!("https://{account_id}.r2.cloudflarestorage.com"));
 
     let creds = Credentials::new(access_key, secret_key, None, None, "r2");
     let cfg = aws_sdk_s3::Config::builder()
@@ -32,8 +34,14 @@ pub struct UploadResult {
 
 /// Upload the first file field from a multipart form to Cloudflare R2.
 pub async fn upload_from_multipart(mut multipart: Multipart) -> Result<UploadResult, AppError> {
-    let bucket = std::env::var("CLOUDFLARE_R2_BUCKET").unwrap_or_else(|_| "zerocopy".into());
-    let pub_url = std::env::var("CLOUDFLARE_R2_PUBLIC_URL").unwrap_or_default();
+    let bucket = std::env::var("CLOUDFLARE_R2_BUCKET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "zerocopy".into());
+    let pub_url = std::env::var("CLOUDFLARE_R2_PUBLIC_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_default();
     let client = build_client();
 
     let Some(field) = multipart
@@ -65,7 +73,7 @@ pub async fn upload_from_multipart(mut multipart: Multipart) -> Result<UploadRes
         .body(ByteStream::from(data))
         .send()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("R2 upload failed: {}", e)))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("R2 upload failed: {:?}", e)))?;
 
     let url = format!("{}/{}", pub_url.trim_end_matches('/'), key);
     Ok(UploadResult { url, key })
@@ -76,9 +84,14 @@ pub async fn upload_pdf_bytes(
     pdf_bytes: Vec<u8>,
     file_name: &str,
 ) -> Result<UploadResult, AppError> {
-    let bucket = std::env::var("CLOUDFLARE_R2_BUCKET").unwrap_or_else(|_| "zerocopy".into());
-    let pub_url =
-        std::env::var("CLOUDFLARE_R2_PUBLIC_URL").unwrap_or_else(|_| "https://thepipe.shop".into());
+    let bucket = std::env::var("CLOUDFLARE_R2_BUCKET")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "zerocopy".into());
+    let pub_url = std::env::var("CLOUDFLARE_R2_PUBLIC_URL")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "https://thepipe.shop".into());
 
     let key = format!("tickets/{}-{}", Utc::now().timestamp_millis(), file_name);
 
@@ -101,7 +114,7 @@ pub async fn upload_pdf_bytes(
         .body(ByteStream::from(pdf_bytes))
         .send()
         .await
-        .map_err(|e| AppError::Internal(anyhow::anyhow!("R2 upload failed: {}", e)))?;
+        .map_err(|e| AppError::Internal(anyhow::anyhow!("R2 upload failed: {:?}", e)))?;
 
     let url = format!("{}/{}", pub_url.trim_end_matches('/'), key);
     Ok(UploadResult { url, key })
