@@ -100,7 +100,10 @@ pub struct Show {
     pub score: Option<f32>,
     #[serde(default)]
     pub weight: Option<i32>,
-    #[serde(default, with = "crate::models::bson_datetime::option_chrono_datetime_as_bson_datetime")]
+    #[serde(
+        default,
+        with = "crate::models::bson_datetime::option_chrono_datetime_as_bson_datetime"
+    )]
     pub next_start_time: Option<DateTime<Utc>>,
     #[serde(default)]
     pub status: ShowStatus,
@@ -129,9 +132,15 @@ pub struct Show {
     pub city: Option<String>,
 
     // ── Timestamps ────────────────────────────────────────────────────────────
-    #[serde(default, with = "crate::models::bson_datetime::option_chrono_datetime_as_bson_datetime")]
+    #[serde(
+        default,
+        with = "crate::models::bson_datetime::option_chrono_datetime_as_bson_datetime"
+    )]
     pub created_at: Option<DateTime<Utc>>,
-    #[serde(default, with = "crate::models::bson_datetime::option_chrono_datetime_as_bson_datetime")]
+    #[serde(
+        default,
+        with = "crate::models::bson_datetime::option_chrono_datetime_as_bson_datetime"
+    )]
     pub deleted_at: Option<DateTime<Utc>>,
 }
 

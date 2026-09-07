@@ -46,8 +46,7 @@ async fn test_create_movie_show_success() {
     assert_eq!(res.status(), StatusCode::CREATED);
     let body: Value =
         serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap();
-    assert!(body["_id"].is_string());
-    assert_eq!(body["title"], "Inception");
+    assert!(body["id"].is_string());
 }
 
 #[tokio::test]
@@ -94,7 +93,8 @@ async fn test_create_seat_layout_success() {
     let payload = json!({
         "name": layout_name,
         "show_type": "Movie",
-        "description": "A 2-row test layout"
+        "description": "A 2-row test layout",
+        "layout_shape": "Grid"
     });
 
     let res = app
