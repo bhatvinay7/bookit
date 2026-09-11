@@ -232,22 +232,20 @@ Each environment is rendered from Kustomize:
 ```text
 bookit-k8s/apps/base
         │
-        ├── apps/overlays/dev  ── apps/regions/dev/us-east
+        ├── apps/overlays/dev
         │
-        └── apps/overlays/prod ──┬── apps/regions/prod/us-east
-                                 └── apps/regions/prod/eu-west
+        └── apps/overlays/prod
 ```
 
 - Application images are stored in GHCR and pinned by CI/CD.
 - Secrets are encrypted per cluster with Sealed Secrets.
-- `BOOKIT_ENVIRONMENT` and `BOOKIT_REGION` are derived from the CI deployment
-  matrix and stored in each cluster's Sealed Secrets, not in ConfigMaps.
-- Argo CD continuously reconciles the regional desired state.
+- `BOOKIT_ENVIRONMENT` is set by the CI deployment target and stored in the
+  cluster's Sealed Secrets, not in ConfigMaps.
+- Argo CD continuously reconciles the desired state for each environment.
 - All application workloads currently start at one replica and can scale to
   five replicas using CPU-based HPAs.
 - Production data services may be managed externally or enabled through the
-  optional Kubernetes HA manifests. Applying the same database manifest in two
-  regions does not create safe cross-region replication.
+  optional Kubernetes HA manifests for the target environment.
 
 ### Development/test-server resource profile
 
@@ -465,7 +463,7 @@ flowchart TD
 ```
 
 HTTP entrypoints create tracing spans, services emit structured JSON logs, and
-the shared telemetry package attaches service, environment and region fields.
+the shared telemetry package attaches service and environment fields.
 Complete end-to-end traces additionally require W3C `traceparent` injection and
 extraction at every HTTP, gRPC, RabbitMQ and Redis Stream boundary. Individual
 PostgreSQL, MongoDB, Redis and Elasticsearch operations need child spans before
@@ -514,19 +512,6 @@ data. Use trace/log fields with retention and access controls instead.
 - Scale consumers based on queue delay while respecting database/provider rate
   limits.
 
-### Multi-region
-
-- Stateless services can run in each region; state does not become multi-region
-  simply because manifests are duplicated.
-- Use one PostgreSQL writer unless the data model is explicitly designed for
-  conflict resolution.
-- Keep Redis caches and WebSocket fan-out regional.
-- Promote databases before redirecting write traffic during failover.
-- Give every RabbitMQ/Redis consumer a unique identity and define whether event
-  processing is regional or global.
-- Test failover with real DNS, secrets, queues, observability and rollback—not
-  only pod readiness.
-
 ### Security
 
 - Terminate TLS at ingress and use TLS to managed data services.
@@ -555,7 +540,7 @@ Run tests against an isolated environment with production-like database tiers:
    redeliveries and duplicate suppression.
 7. Stop Redis, PostgreSQL, MongoDB, RabbitMQ, OTEL and individual pods to verify
    timeouts, buffering, recovery and telemetry behavior.
-8. Run a regional failover exercise and record measured RTO/RPO.
+8. Run an environment recovery exercise and record measured RTO/RPO.
 
 Publish a versioned report containing commit SHA, image digests, cluster/node
 types, database tiers, dataset size, test scripts, traffic mix, latency
@@ -604,6 +589,6 @@ npm run dev --workspace=web
 docker compose up --build
 ```
 
-For Kubernetes deployment, secret lifecycle, regional overlays, promotion,
+For Kubernetes deployment, secret lifecycle, environment overlays, promotion,
 backup and disaster-recovery procedures, see the
 [`bookit-k8s` operations guide](bookit-k8s/README.md).
