@@ -57,11 +57,20 @@ jobs:
             exit 1
           fi
 
+      - name: Validate GitOps write credentials
+        env:
+          GITOPS_TOKEN: ${{ secrets.GITOPS_TOKEN }}
+        run: |
+          if [ -z "$GITOPS_TOKEN" ]; then
+            echo "GITOPS_TOKEN is required to commit sealed secrets to bookit-k8s."
+            exit 1
+          fi
+
       - name: Checkout GitOps repository
         uses: actions/checkout@v4
         with:
           repository: ${{ secrets.GITOPS_REPO || 'bhatvinay7/bookit-k8s' }}
-          token: ${{ secrets.GITOPS_TOKEN || github.token }}
+          token: ${{ secrets.GITOPS_TOKEN }}
           ref: ${{ github.ref_name }}
 
       - uses: actions/setup-python@v5
@@ -113,7 +122,7 @@ jobs:
           echo "API server:           $actual_server"
           kubectl get --raw=/version >/dev/null
 
-      - name: Install ArgoCD & Apply App of Apps
+      - name: Install ArgoCD and platform controllers
         env:
           GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL || secrets.GATEWAY_KEEPER_GRPC_URL }}
           TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'deployment1') }}
@@ -168,6 +177,7 @@ jobs:
           fi
           kubectl rollout status "$controller_deployment" -n kube-system --timeout=5m
           controller_name="${controller_deployment#deployment.apps/}"
+          echo "SEALED_SECRETS_CONTROLLER_NAME=$controller_name" >> "$GITHUB_ENV"
 
           # Wait until the Service has at least one endpoint address registered.
           # kubeseal --fetch-cert proxies through the API server; it fails with
@@ -271,6 +281,109 @@ jobs:
           fi
           python3 scripts/bootstrap-monitoring.py "infra/overlays/$monitoring_environment"
 
+      - name: Generate Sealed Secrets
+        env:
+          DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME || github.repository_owner }}
+          GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
+          CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
+          CLOUDFLARE_R2_SECRET_ACCESS_KEY: ${{ secrets.CLOUDFLARE_R2_SECRET_ACCESS_KEY }}
+          CLOUDFLARE_R2_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_R2_ACCOUNT_ID }}
+          CLOUDFLARE_R2_ENDPOINT: ${{ secrets.CLOUDFLARE_R2_ENDPOINT }}
+          CLOUDFLARE_R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
+          CLOUDFLARE_R2_PUBLIC_URL: ${{ secrets.CLOUDFLARE_R2_PUBLIC_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MONGODB_DB: ${{ secrets.MONGODB_DB }}
+          ELASTICSEARCH_URL: ${{ secrets.ELASTICSEARCH_URL }}
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL || secrets.GATEWAY_KEEPER_GRPC_URL }}
+          GATEWAY_KEEPER_GRPC_URL: ${{ secrets.GATEWAY_KEEPER_GRPC_URL || secrets.GRPC_SERVER_URL }}
+          HTTP_SERVER_URL: ${{ secrets.HTTP_SERVER_URL }}
+          SEARCH_SERVER_GRPC_URL: ${{ secrets.SEARCH_SERVER_GRPC_URL }}
+          CORS_ALLOWED_ORIGINS: ${{ secrets.CORS_ALLOWED_ORIGINS || vars.CORS_ALLOWED_ORIGINS }}
+          JWT_SECRET: ${{ secrets.JWT_SECRET }}
+          INVITATION_ENCRYPTION_KEY: ${{ secrets.INVITATION_ENCRYPTION_KEY }}
+          MONGODB_URL: ${{ secrets.MONGODB_URL || secrets.MONGO_DB_URL }}
+          RAZORPAY_KEY_ID: ${{ secrets.RAZORPAY_KEY_ID }}
+          RAZORPAY_KEY_SECRET: ${{ secrets.RAZORPAY_KEY_SECRET }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST || 'smtp.gmail.com' }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT || '465' }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS || secrets.GMAIL_APP_PASSWORD }}
+          SMTP_USER: ${{ secrets.SMTP_USER || secrets.GMAIL_USER }}
+          SUPPORT_EMAIL: ${{ secrets.SUPPORT_EMAIL }}
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
+          NEXT_PUBLIC_SOCKET_URL: ${{ secrets.NEXT_PUBLIC_SOCKET_URL || secrets.NEXT_PUBLIC_WS_BASE_URL }}
+          NEXT_PUBLIC_WS_BASE_URL: ${{ secrets.NEXT_PUBLIC_WS_BASE_URL }}
+          NEXT_PUBLIC_SEARCH_API_URL: ${{ secrets.NEXT_PUBLIC_SEARCH_API_URL }}
+          NEXT_PUBLIC_RAZORPAY_KEY_ID: ${{ secrets.NEXT_PUBLIC_RAZORPAY_KEY_ID }}
+          NEXT_PUBLIC_USE_REMOTE_STOCKFISH: ${{ vars.NEXT_PUBLIC_USE_REMOTE_STOCKFISH || 'false' }}
+          REDIS_URL: ${{ secrets.REDIS_URL }}
+          REDIS_CLUSTER_URL: ${{ secrets.REDIS_CLUSTER_URL }}
+          REDIS_CLUSTER_URLS: ${{ secrets.REDIS_CLUSTER_URLS }}
+          REDIS_REMOTE_URL: ${{ secrets.REDIS_REMOTE_URL }}
+          RABBITMQ_URL: ${{ secrets.RABBITMQ_URL }}
+          SMTP_SECURE: ${{ secrets.SMTP_SECURE }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          REPLICATION_URL: ${{ secrets.REPLICATION_URL }}
+          SLOT_NAME: ${{ secrets.SLOT_NAME }}
+          PUBLICATION: ${{ secrets.PUBLICATION }}
+          CUSTOM_DB_MONGODB_ROOT_PASSWORD: ${{ secrets.CUSTOM_DB_MONGODB_ROOT_PASSWORD }}
+          CUSTOM_DB_MONGODB_REPLICA_SET_KEY: ${{ secrets.CUSTOM_DB_MONGODB_REPLICA_SET_KEY }}
+          CUSTOM_DB_MONGODB_EXPORTER_URI: ${{ secrets.CUSTOM_DB_MONGODB_EXPORTER_URI }}
+          CUSTOM_DB_POSTGRES_ADMIN_PASSWORD: ${{ secrets.CUSTOM_DB_POSTGRES_ADMIN_PASSWORD }}
+          CUSTOM_DB_POSTGRES_PASSWORD: ${{ secrets.CUSTOM_DB_POSTGRES_PASSWORD }}
+          CUSTOM_DB_POSTGRES_REPLICATION_PASSWORD: ${{ secrets.CUSTOM_DB_POSTGRES_REPLICATION_PASSWORD }}
+          CUSTOM_DB_REPMGR_PASSWORD: ${{ secrets.CUSTOM_DB_REPMGR_PASSWORD }}
+          CUSTOM_DB_POSTGRES_EXPORTER_DSN: ${{ secrets.CUSTOM_DB_POSTGRES_EXPORTER_DSN }}
+          CUSTOM_DB_PGPOOL_ADMIN_PASSWORD: ${{ secrets.CUSTOM_DB_PGPOOL_ADMIN_PASSWORD }}
+          CUSTOM_DB_RABBITMQ_ERLANG_COOKIE: ${{ secrets.CUSTOM_DB_RABBITMQ_ERLANG_COOKIE }}
+          CUSTOM_DB_RABBITMQ_USERNAME: ${{ secrets.CUSTOM_DB_RABBITMQ_USERNAME }}
+          CUSTOM_DB_RABBITMQ_PASSWORD: ${{ secrets.CUSTOM_DB_RABBITMQ_PASSWORD }}
+          CUSTOM_DB_REDIS_PASSWORD: ${{ secrets.CUSTOM_DB_REDIS_PASSWORD }}
+        run: |
+          # The controller and kubeseal are installed by the bootstrap step above.
+          kube_context=$(kubectl config current-context)
+          test -n "$kube_context"
+          test -n "$SEALED_SECRETS_CONTROLLER_NAME"
+          ./scripts/seal-cluster-secrets.sh "$DEPLOY_ENV" us-east "$kube_context"
+
+      - name: Validate sealed GitOps deployment
+        env:
+          DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+        run: |
+          kubectl kustomize "apps/regions/${DEPLOY_ENV}/us-east" >/dev/null
+
+      - name: Commit and push sealed secrets
+        env:
+          DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+          GITOPS_BRANCH: ${{ github.ref_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -- "apps/regions/${DEPLOY_ENV}/us-east/secrets"
+          if git diff --cached --quiet; then
+            echo "No sealed secret changes to commit."
+            exit 0
+          fi
+          git commit -m "chore(secrets): seal ${DEPLOY_ENV} secrets from bootstrap"
+          # CI may update image tags while bootstrap seals secrets.
+          for attempt in 1 2 3; do
+            if git push origin "HEAD:$GITOPS_BRANCH"; then
+              exit 0
+            fi
+            git fetch origin "$GITOPS_BRANCH"
+            git rebase "origin/$GITOPS_BRANCH"
+          done
+          echo "Could not push sealed secrets after three attempts."
+          exit 1
+
+      - name: Apply application sets
+        env:
+          TARGET_ENVIRONMENT: ${{ github.ref_name == 'main' && 'production' || 'deployment1' }}
+        run: |
           if [ "$TARGET_ENVIRONMENT" = "production" ]; then
             echo "Bootstrapping production applications from main."
             kubectl apply -f argocd/prod-apps.yaml

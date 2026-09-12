@@ -239,7 +239,7 @@ bookit-k8s/apps/base
 
 - Application images are stored in GHCR and pinned by CI/CD.
 - Secrets are encrypted per cluster with Sealed Secrets.
-- `BOOKIT_ENVIRONMENT` is set by the CI deployment target and stored in the
+- `BOOKIT_ENVIRONMENT` is set by the bootstrap deployment target and stored in the
   cluster's Sealed Secrets, not in ConfigMaps.
 - Argo CD continuously reconciles the desired state for each environment.
 - All application workloads currently start at one replica and can scale to
