@@ -8,3 +8,4 @@ node_modules/
 update_mongo_cities.js
 seed.js
 bookit-k8s__pycache__/
+bookit-k8s
