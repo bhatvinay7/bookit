@@ -57,10 +57,22 @@ jobs:
           token: ${{ secrets.GITOPS_TOKEN || github.token }}
           ref: ${{ github.ref_name }}
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install manifest parser
+        run: python3 -m pip install PyYAML==6.0.3
+      - uses: azure/setup-helm@v4
+      - name: Validate deployment images and namespaces
+        env:
+          TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'deployment1') }}
+        run: |
+          image_environment=dev
+          if [ "$TARGET_ENVIRONMENT" = "production" ]; then image_environment=prod; fi
+          python3 scripts/validate-monitoring.py --require-images "$image_environment"
       - name: Configure kubectl
         env:
           KUBE_DATA: ${{ secrets.KUBECONFIG }}
-          KUBE_DATA_SECONDARY: ${{ secrets.KUBE_CONFIG_SECONDARY }}
         run: |
           if [ -z "$KUBE_DATA" ]; then
             echo "Error: KUBECONFIG secret is not set!"
@@ -76,8 +88,6 @@ jobs:
             printf "%s" "$KUBE_DATA" | base64 -d > ~/.kube/config
           fi
           chmod 600 ~/.kube/config
-
-
 
       - name: Verify kubeconfig access
         run: |
@@ -98,7 +108,6 @@ jobs:
 
       - name: Install ArgoCD & Apply App of Apps
         env:
-          ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
           GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL || secrets.GATEWAY_KEEPER_GRPC_URL }}
           TARGET_ENVIRONMENT: ${{ github.event_name == 'workflow_dispatch' && inputs.target_environment || (github.ref_name == 'main' && 'production' || 'deployment1') }}
         run: |
@@ -109,10 +118,10 @@ jobs:
             kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
             # Use server-side apply to avoid the 262144 byte annotation limit on huge CRDs
             kubectl apply -n argocd --server-side -f https://raw.githubusercontent.com/argoproj/argo-cd/stable/manifests/install.yaml
-            
+
             # Wait a few seconds for CRDs to be fully registered
             sleep 10
-            
+
             echo "Patching ArgoCD resources..."
             kubectl set resources deployment argocd-server -n argocd --limits=cpu=1000m,memory=1Gi --requests=cpu=250m,memory=256Mi
             kubectl set resources deployment argocd-repo-server -n argocd --limits=cpu=1000m,memory=1Gi --requests=cpu=250m,memory=256Mi
@@ -240,9 +249,8 @@ jobs:
           argocd cluster add "$PRIMARY_CONTEXT" --in-cluster --yes --upsert \
             --label deploy-stateful-services=true \
             --label environment="$TARGET_ENVIRONMENT" \
-            --label region=${{ secrets.PRIMARY_REGION }} \
+            --label region=us-east \
             --label use_cloud_provider=${{ secrets.USE_CLOUD_PROVIDER }}
-
 
 
           echo "Waiting for essential controllers (cert-manager and ingress-nginx) to be fully ready..."
@@ -250,10 +258,16 @@ jobs:
           kubectl wait --for=condition=Available deployment -l app.kubernetes.io/component=controller -n ingress-nginx --timeout=5m
           # Sealed Secrets was already waited on above
 
+          monitoring_environment=dev
+          if [ "$TARGET_ENVIRONMENT" = "production" ]; then
+            monitoring_environment=prod
+          fi
+          python3 scripts/bootstrap-monitoring.py "infra/overlays/$monitoring_environment"
+
           if [ "$TARGET_ENVIRONMENT" = "production" ]; then
             echo "Bootstrapping production applications from main."
             kubectl apply -f argocd/prod-apps.yaml
-            kubectl apply -f argocd/stateful-applicationset.yaml
+            sed "s/targetRevision: deployment1/targetRevision: main/" argocd/stateful-applicationset.yaml | kubectl apply -f -
             kubectl apply -f argocd/argocd-ingress.yaml
           else
             echo "Bootstrapping deployment1 applications from deployment1."

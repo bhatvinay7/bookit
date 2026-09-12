@@ -244,7 +244,7 @@ jobs:
     # production reuses a tested dev digest through promote-production.yaml.
     if: |
       (
-        (github.event_name == 'push' && github.ref == 'refs/heads/deployment1') || 
+        (github.event_name == 'push' && github.ref == 'refs/heads/deployment1') ||
         github.event_name == 'workflow_dispatch'
       ) &&
       needs.detect-changes.outputs.services != '[]' &&
@@ -311,7 +311,7 @@ jobs:
     needs: [build-and-push, detect-changes]
     if: |
       (
-        (github.event_name == 'push' && github.ref == 'refs/heads/deployment1') || 
+        (github.event_name == 'push' && github.ref == 'refs/heads/deployment1') ||
         github.event_name == 'workflow_dispatch'
       ) &&
       needs.detect-changes.outputs.services != '[]' &&
@@ -393,9 +393,6 @@ jobs:
         working-directory: gitops-repo
         env:
           DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
-          DEPLOY_REGIONS: ${{ secrets.DEPLOY_REGIONS }}
-          KUBE_CONTEXTS: ${{ secrets.KUBE_CONTEXTS }}
-          ENABLE_MULTI_REGION: ${{ vars.ENABLE_MULTI_REGION || 'false' }}
           GHCR_USERNAME: ${{ github.repository_owner }}
           GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
@@ -463,36 +460,25 @@ jobs:
           tar -xzf /tmp/kubeseal.tar.gz -C /tmp kubeseal
           sudo install -m 755 /tmp/kubeseal /usr/local/bin/kubeseal
 
-          IFS=',' read -ra regions <<< "${DEPLOY_REGIONS}"
-          IFS=',' read -ra contexts <<< "${KUBE_CONTEXTS}"
-          if [ "${#regions[@]}" -eq 0 ] || [ "${#regions[@]}" -ne "${#contexts[@]}" ]; then
-            echo "DEPLOY_REGIONS and KUBE_CONTEXTS must be non-empty comma-separated lists of equal length."
+          # Use the context selected by this environment's KUBECONFIG.
+          kube_context=$(kubectl config current-context)
+          test -n "$kube_context"
+          controller_deployment=$(kubectl --context "$kube_context" get deployment \
+            -n kube-system -l app.kubernetes.io/name=sealed-secrets -o name | head -n 1)
+          if [ -z "$controller_deployment" ]; then
+            echo "Sealed Secrets controller is not installed in the selected cluster. Bootstrap it before CI sealing."
             exit 1
           fi
-          regions=("${regions[0]}")
-          contexts=("${contexts[0]}")
-
-          for index in "${!regions[@]}"; do
-            controller_deployment=$(kubectl --context "${contexts[$index]}" get deployment \
-              -n kube-system -l app.kubernetes.io/name=sealed-secrets -o name | head -n 1)
-            if [ -z "$controller_deployment" ]; then
-              echo "Sealed Secrets controller is not installed in context ${contexts[$index]}. Bootstrap it before CI sealing."
-              exit 1
-            fi
-            kubectl --context "${contexts[$index]}" rollout status "$controller_deployment" \
-              -n kube-system --timeout=5m
-            ./scripts/seal-cluster-secrets.sh "$DEPLOY_ENV" "${regions[$index]}" "${contexts[$index]}"
-          done
+          kubectl --context "$kube_context" rollout status "$controller_deployment" \
+            -n kube-system --timeout=5m
+          ./scripts/seal-cluster-secrets.sh "$DEPLOY_ENV" us-east "$kube_context"
 
       - name: Validate rendered GitOps deployment
         working-directory: gitops-repo
         env:
           DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
-          DEPLOY_REGIONS: ${{ secrets.DEPLOY_REGIONS }}
         run: |
-          IFS=',' read -ra regions <<< "$DEPLOY_REGIONS"
-          regions=("${regions[0]}")
-          for region in "${regions[@]}"; do
+          for region in us-east; do
             target="apps/regions/${DEPLOY_ENV}/${region}"
             rendered=$(mktemp)
             kubectl kustomize "$target" > "$rendered"
