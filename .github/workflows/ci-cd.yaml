@@ -243,10 +243,8 @@ jobs:
     # Dev builds the immutable artifacts. Main and pull requests validate only;
     # production reuses a tested dev digest through promote-production.yaml.
     if: |
-      (
-        (github.event_name == 'push' && github.ref == 'refs/heads/deployment1') ||
-        github.event_name == 'workflow_dispatch'
-      ) &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/deployment1' &&
       needs.detect-changes.outputs.services != '[]' &&
       needs.detect-changes.outputs.services != ''
     runs-on: ubuntu-22.04
@@ -310,10 +308,8 @@ jobs:
     name: Update ArgoCD GitOps Manifests
     needs: [build-and-push, detect-changes]
     if: |
-      (
-        (github.event_name == 'push' && github.ref == 'refs/heads/deployment1') ||
-        github.event_name == 'workflow_dispatch'
-      ) &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/deployment1' &&
       needs.detect-changes.outputs.services != '[]' &&
       needs.detect-changes.outputs.services != ''
     runs-on: ubuntu-22.04
@@ -327,7 +323,7 @@ jobs:
           # GITHUB_TOKEN only works on the current repo and will 404 on external repos
           token: ${{ secrets.GITOPS_TOKEN || github.token }}
           path: gitops-repo
-          ref: ${{ github.ref_name }}
+          ref: deployment1
 
       - name: Configure kubectl
         env:
@@ -354,7 +350,7 @@ jobs:
         env:
           # KUSTOMIZE_DIR: path inside bookit-k8s repo containing kustomization.yaml
           # Based on bookit-k8s repo structure: apps/ directory holds kustomization.yaml
-          KUSTOMIZE_DIR: ${{ github.ref_name == 'main' && 'apps/overlays/prod' || 'apps/overlays/dev' }}
+          KUSTOMIZE_DIR: apps/overlays/dev
         run: |
           # Try explicit path first, then fallback to dynamic discovery
           if [ -f "${KUSTOMIZE_DIR}/kustomization.yaml" ] || [ -f "${KUSTOMIZE_DIR}/kustomization.yml" ]; then
@@ -392,7 +388,7 @@ jobs:
       - name: Generate Sealed Secrets
         working-directory: gitops-repo
         env:
-          DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+          DEPLOY_ENV: dev
           GHCR_USERNAME: ${{ github.repository_owner }}
           GHCR_TOKEN: ${{ secrets.GHCR_PULL_TOKEN }}
           CLOUDFLARE_R2_ACCESS_KEY_ID: ${{ secrets.CLOUDFLARE_R2_ACCESS_KEY_ID }}
@@ -473,7 +469,7 @@ jobs:
       - name: Validate rendered GitOps deployment
         working-directory: gitops-repo
         env:
-          DEPLOY_ENV: ${{ github.ref_name == 'main' && 'prod' || 'dev' }}
+          DEPLOY_ENV: dev
         run: |
           for region in us-east; do
             target="apps/regions/${DEPLOY_ENV}/${region}"
@@ -502,7 +498,7 @@ jobs:
           git add -A
           if ! git diff --cached --quiet; then
             git commit -m "chore(gitops): update image tags to commit-$(echo '${{ github.sha }}' | cut -c1-7) [skip ci]"
-            git push origin HEAD:${{ github.ref_name }}
+            git push origin HEAD:deployment1
           else
             echo "No image tag changes to commit."
           fi

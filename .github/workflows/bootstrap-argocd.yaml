@@ -29,8 +29,15 @@ env:
 jobs:
   bootstrap-argocd:
     name: Bootstrap ArgoCD on Cluster
+    # Reject a mismatched manual target before accessing environment secrets.
+    if: >-
+      (github.event_name == 'push' &&
+       (github.ref == 'refs/heads/deployment1' || github.ref == 'refs/heads/main')) ||
+      (github.event_name == 'workflow_dispatch' &&
+       ((github.ref == 'refs/heads/deployment1' && inputs.target_environment == 'deployment1') ||
+        (github.ref == 'refs/heads/main' && inputs.target_environment == 'production')))
     runs-on: ubuntu-latest
-    environment: ${{ github.event_name == 'workflow_dispatch' && (inputs.target_environment == 'deployment1' && 'development' || inputs.target_environment) || (github.ref_name == 'main' && 'production' || 'development') }}
+    environment: ${{ github.ref_name == 'main' && 'production' || 'development' }}
     steps:
       - name: Validate environment and source branch
         env:
