@@ -153,6 +153,21 @@ jobs:
           kubectl rollout status "$controller_deployment" -n kube-system --timeout=5m
           controller_name="${controller_deployment#deployment.apps/}"
 
+          # Wait until the Service has at least one endpoint address registered.
+          # kubeseal --fetch-cert proxies through the API server; it fails with
+          # "no endpoints available" until the Endpoints object is populated.
+          deadline=$((SECONDS + 120))
+          while (( SECONDS < deadline )); do
+            addrs=$(kubectl get endpoints "$controller_name" -n kube-system \
+              -o jsonpath='{.subsets[0].addresses}' 2>/dev/null || true)
+            if [ -n "$addrs" ] && [ "$addrs" != 'null' ]; then
+              echo "sealed-secrets-controller endpoint is ready."
+              break
+            fi
+            echo "Waiting for sealed-secrets-controller endpoint..."
+            sleep 5
+          done
+
           # ----------------------------------------------------------------------
           # OPTIONAL: Self-Hosted High Availability Database Deployments
           # If you are not using managed cloud services for Redis/Postgres/Mongo/RMQ,
