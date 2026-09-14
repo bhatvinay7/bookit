@@ -78,3 +78,32 @@ pub async fn connect_with_retry() -> lapin::Result<Connection> {
     })
     .await
 }
+/// Carry W3C context through RabbitMQ without altering the business payload.
+pub fn traced_properties(properties: lapin::BasicProperties) -> lapin::BasicProperties {
+    let mut headers = properties.headers().clone().unwrap_or_default();
+    for (key, value) in bookit_telemetry::current_carrier() {
+        headers.insert(
+            key.into(),
+            lapin::types::AMQPValue::LongString(value.into()),
+        );
+    }
+    properties.with_headers(headers)
+}
+
+pub fn delivery_span(delivery: &lapin::message::Delivery, queue: &str) -> tracing::Span {
+    let mut carrier = bookit_telemetry::TraceCarrier::new();
+    if let Some(headers) = delivery.properties.headers() {
+        for key in ["traceparent", "tracestate"] {
+            if let Some(lapin::types::AMQPValue::LongString(value)) = headers.inner().get(key)
+                && let Ok(value) = std::str::from_utf8(value.as_bytes())
+            {
+                carrier.insert(key.into(), value.into());
+            }
+        }
+    }
+    bookit_telemetry::operation_span(
+        &format!("{queue} process"),
+        "consumer",
+        Some(bookit_telemetry::extract_context(&carrier)),
+    )
+}

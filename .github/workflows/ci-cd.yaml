@@ -88,6 +88,8 @@ jobs:
       # Keep them enabled even while the older environment-backed suite is paused.
       - name: Test transactional outbox and payment idempotency
         run: |
+          cargo test -p bookit-telemetry
+          cargo test --workspace --test telemetry_contract
           cargo test -p outbox-server --test outbox_policy
           cargo test -p payment-processor --test payload_parsing
           cargo test -p http-server --test payment_idempotency
@@ -129,6 +131,7 @@ jobs:
 
             http-server:
               - 'apps/http-server/**'
+              - 'packages/telemetry/**'
               - 'packages/db/**'
               - 'packages/rmq-conn/**'
               - 'packages/redis-conn/**'
@@ -137,11 +140,13 @@ jobs:
               - 'Cargo.lock'
             ws-server:
               - 'apps/ws-server/**'
+              - 'packages/telemetry/**'
               - 'packages/redis-conn/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             gateway-keeper:
               - 'apps/gateway-keeper/**'
+              - 'packages/telemetry/**'
               - 'packages/rmq-conn/**'
               - 'packages/redis-conn/**'
               - 'packages/proto/**'
@@ -149,6 +154,7 @@ jobs:
               - 'Cargo.lock'
             lock-server:
               - 'apps/lock-server/**'
+              - 'packages/telemetry/**'
               - 'packages/rmq-conn/**'
               - 'packages/redis-conn/**'
               - 'packages/db/**'
@@ -156,11 +162,13 @@ jobs:
               - 'Cargo.lock'
             notification-worker:
               - 'apps/notification-worker/**'
+              - 'packages/telemetry/**'
               - 'packages/rmq-conn/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             payment-processor:
               - 'apps/payment-processor/**'
+              - 'packages/telemetry/**'
               - 'packages/rmq-conn/**'
               - 'packages/db/**'
               - 'Cargo.toml'
@@ -174,16 +182,20 @@ jobs:
               - 'Cargo.lock'
             search-server:
               - 'apps/search-server/**'
+              - 'packages/telemetry/**'
               - 'packages/rmq-conn/**'
               - 'packages/proto/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
             web:
               - 'apps/web/**'
+              - 'package-lock.json'
+              - 'package.json'
               - 'pnpm-lock.yaml'
               - 'turbo.json'
             cdc-worker:
               - 'apps/cdc-worker/**'
+              - 'packages/telemetry/**'
               - 'packages/db/**'
               - 'packages/redis-conn/**'
               - 'packages/mongo-conn/**'

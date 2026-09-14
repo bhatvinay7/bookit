@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+bookit-telemetry = { path = "../telemetry" }
 futures = "0.3.32"
 lapin = { version = "4.10.0", features = ["rustls"] }
 tokio = { version = "1.53.0", features = ["full"] }

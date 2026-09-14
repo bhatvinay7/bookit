@@ -1186,10 +1186,15 @@ dependencies = [
 name = "bookit-telemetry"
 version = "0.1.0"
 dependencies = [
+ "http 1.5.0",
  "opentelemetry",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
+ "serde_json",
  "tokio",
+ "tonic 0.12.3",
+ "tower-layer",
+ "tower-service",
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
@@ -3728,6 +3733,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "tokio-stream",
+ "tracing",
  "uuid",
 ]
 
@@ -4099,6 +4105,7 @@ dependencies = [
  "sha2 0.10.9",
  "tokio",
  "tokio-stream",
+ "tracing",
  "uuid",
 ]
 
@@ -4975,6 +4982,7 @@ dependencies = [
 name = "rmq-conn"
 version = "0.1.0"
 dependencies = [
+ "bookit-telemetry",
  "futures",
  "lapin",
  "tokio",

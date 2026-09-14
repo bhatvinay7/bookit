@@ -21,71 +21,87 @@ impl SlotLockingService for GatewayLockingService {
         &self,
         request: Request<LockSlotRequest>,
     ) -> Result<Response<LockSlotResponse>, Status> {
-        let request = request.into_inner();
-        if request.showtime_id < 0
-            || request.total_seat_count <= 0
-            || request.seat_ids.is_empty()
-            || request.seat_ids.iter().any(|id| *id <= 0)
-            || request.seat_ids.len() != request.seat_indices.len()
-        {
-            return Err(Status::invalid_argument(
-                "showtime_id, total_seat_count, seat_ids and seat_indices are required",
-            ));
-        }
-        let result = self
-            .gateway
-            .lock(
-                request.user_id,
-                request.showtime_id,
-                request.seat_ids,
-                request.seat_indices,
-                request.total_seat_count,
-            )
-            .await
-            .map_err(Status::invalid_argument)?;
-        Ok(Response::new(LockSlotResponse {
-            success: !result.locked_seat_ids.is_empty(),
-            message: "Lock request processed by gateway keeper".into(),
-            locked_seat_ids: result.locked_seat_ids,
-            failed_seat_ids: result.failed_seat_ids,
-        }))
+        bookit_telemetry::grpc_request(
+            request,
+            "locking.SlotLockingService",
+            "LockSlot",
+            |request| async move {
+                let request = request.into_inner();
+                if request.showtime_id < 0
+                    || request.total_seat_count <= 0
+                    || request.seat_ids.is_empty()
+                    || request.seat_ids.iter().any(|id| *id <= 0)
+                    || request.seat_ids.len() != request.seat_indices.len()
+                {
+                    return Err(Status::invalid_argument(
+                        "showtime_id, total_seat_count, seat_ids and seat_indices are required",
+                    ));
+                }
+                let result = self
+                    .gateway
+                    .lock(
+                        request.user_id,
+                        request.showtime_id,
+                        request.seat_ids,
+                        request.seat_indices,
+                        request.total_seat_count,
+                    )
+                    .await
+                    .map_err(Status::invalid_argument)?;
+                Ok(Response::new(LockSlotResponse {
+                    success: !result.locked_seat_ids.is_empty(),
+                    message: "Lock request processed by gateway keeper".into(),
+                    locked_seat_ids: result.locked_seat_ids,
+                    failed_seat_ids: result.failed_seat_ids,
+                }))
+            },
+        )
+        .await
     }
 
     async fn unlock_slot(
         &self,
         request: Request<UnlockSlotRequest>,
     ) -> Result<Response<UnlockSlotResponse>, Status> {
-        let request = request.into_inner();
-        if request.showtime_id < 0
-            || request.total_seat_count <= 0
-            || request.seat_ids.is_empty()
-            || request.seat_ids.iter().any(|id| *id <= 0)
-            || request.seat_ids.len() != request.seat_indices.len()
-        {
-            return Err(Status::invalid_argument(
-                "showtime_id, total_seat_count, seat_ids and seat_indices are required",
-            ));
-        }
-        let unlocked_seat_ids = match self
-            .gateway
-            .cancel(
-                request.user_id,
-                request.showtime_id,
-                request.seat_ids,
-                request.seat_indices,
-                request.total_seat_count,
-            )
-            .await
-        {
-            Ok(ids) => ids,
-            Err(e) => {
-                return Err(Status::invalid_argument(e));
-            }
-        };
-        Ok(Response::new(UnlockSlotResponse {
-            success: !unlocked_seat_ids.is_empty(),
-            message: "Cancellation processed by gateway keeper".into(),
-            unlocked_seat_ids,
-        }))
+        bookit_telemetry::grpc_request(
+            request,
+            "locking.SlotLockingService",
+            "UnlockSlot",
+            |request| async move {
+                let request = request.into_inner();
+                if request.showtime_id < 0
+                    || request.total_seat_count <= 0
+                    || request.seat_ids.is_empty()
+                    || request.seat_ids.iter().any(|id| *id <= 0)
+                    || request.seat_ids.len() != request.seat_indices.len()
+                {
+                    return Err(Status::invalid_argument(
+                        "showtime_id, total_seat_count, seat_ids and seat_indices are required",
+                    ));
+                }
+                let unlocked_seat_ids = match self
+                    .gateway
+                    .cancel(
+                        request.user_id,
+                        request.showtime_id,
+                        request.seat_ids,
+                        request.seat_indices,
+                        request.total_seat_count,
+                    )
+                    .await
+                {
+                    Ok(ids) => ids,
+                    Err(e) => {
+                        return Err(Status::invalid_argument(e));
+                    }
+                };
+                Ok(Response::new(UnlockSlotResponse {
+                    success: !unlocked_seat_ids.is_empty(),
+                    message: "Cancellation processed by gateway keeper".into(),
+                    unlocked_seat_ids,
+                }))
+            },
+        )
+        .await
     }
 }

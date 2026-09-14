@@ -39,171 +39,243 @@ fn parse_seat_ids(payload: &serde_json::Value) -> Vec<i32> {
 }
 
 pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
-    println!("Listening for Fanout Booking Events...");
+    tracing::info!("Listening for Fanout Booking Events...");
 
     while let Some(delivery) = consumer.next().await {
         if let Ok(delivery) = delivery {
-            if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&delivery.data) {
-                let event_type = payload["event_type"].as_str().unwrap_or_default();
-                println!("Received event_type: {}", event_type);
+            let span = rmq_conn::delivery_span(&delivery, "notification_queue");
+            bookit_telemetry::in_span(span, async {
+                if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&delivery.data) {
+                    let event_type = payload["event_type"].as_str().unwrap_or_default();
+                    tracing::info!("Received event_type: {}", event_type);
 
-                if event_type == "OrderCompleted" || event_type == "BookingSuccess" {
-                    let order_id_str = payload["order_id"].as_str().unwrap_or_default();
-                    let user_id_val = payload["user_id"].as_i64().unwrap_or(0) as i32;
-                    let schedule_id_val = payload["schedule_id"]
-                        .as_i64()
-                        .or_else(|| payload["showtime_id"].as_i64())
-                        .unwrap_or(0) as i32;
-                    let seat_ids = parse_seat_ids(&payload);
-                    let amount_val = payload["amount"].clone();
-                    let amount_str = amount_val
-                        .as_str()
-                        .map(|s| s.to_string())
-                        .or_else(|| amount_val.as_f64().map(|f| f.to_string()))
-                        .unwrap_or_else(|| "0".to_string());
+                    if event_type == "OrderCompleted" || event_type == "BookingSuccess" {
+                        let order_id_str = payload["order_id"].as_str().unwrap_or_default();
+                        let user_id_val = payload["user_id"].as_i64().unwrap_or(0) as i32;
+                        let schedule_id_val = payload["schedule_id"]
+                            .as_i64()
+                            .or_else(|| payload["showtime_id"].as_i64())
+                            .unwrap_or(0) as i32;
+                        let seat_ids = parse_seat_ids(&payload);
+                        let amount_val = payload["amount"].clone();
+                        let amount_str = amount_val
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| amount_val.as_f64().map(|f| f.to_string()))
+                            .unwrap_or_else(|| "0".to_string());
 
-                    let Ok(order_uuid) = Uuid::from_str(order_id_str) else {
-                        println!(
-                            "Invalid order UUID in OrderCompleted event: {}",
-                            order_id_str
-                        );
-                        let _ = delivery.ack(BasicAckOptions::default()).await;
-                        continue;
-                    };
-
-                    let mut db_conn = match db_pool.get() {
-                        Ok(c) => c,
-                        Err(_) => {
-                            println!("DB connection failed, routing to DLQ");
-                            let _ = delivery
-                                .nack(BasicNackOptions {
-                                    multiple: false,
-                                    requeue: false,
-                                })
-                                .await;
-                            continue;
-                        }
-                    };
-
-                    // Ticket creation and email delivery have separate completion states.
-                    let existing_ticket = match tk::tickets
-                        .filter(tk::order_id.eq(order_uuid))
-                        .first::<Ticket>(&mut db_conn)
-                        .optional()
-                    {
-                        Ok(ticket) => ticket,
-                        Err(error) => {
-                            eprintln!("Ticket lookup failed: {}", error);
-                            let _ = delivery
-                                .nack(BasicNackOptions {
-                                    multiple: false,
-                                    requeue: false,
-                                })
-                                .await;
-                            continue;
-                        }
-                    };
-                    let email_sent = ua::user_audits
-                        .filter(ua::order_id.eq(order_uuid))
-                        .filter(ua::action.eq("booking_email_sent"))
-                        .select(ua::id)
-                        .first::<Uuid>(&mut db_conn)
-                        .optional();
-                    match email_sent {
-                        Ok(Some(_)) => {
+                        let Ok(order_uuid) = Uuid::from_str(order_id_str) else {
+                            tracing::error!(
+                                "Invalid order UUID in OrderCompleted event: {}",
+                                order_id_str
+                            );
                             let _ = delivery.ack(BasicAckOptions::default()).await;
-                            continue;
-                        }
-                        Err(error) => {
-                            eprintln!("Email delivery lookup failed: {}", error);
-                            let _ = delivery
-                                .nack(BasicNackOptions {
-                                    multiple: false,
-                                    requeue: false,
-                                })
-                                .await;
-                            continue;
-                        }
-                        Ok(None) => {}
-                    }
-                    if existing_ticket
-                        .as_ref()
-                        .is_some_and(|ticket| ticket.status != "active")
-                    {
-                        let _ = delivery.ack(BasicAckOptions::default()).await;
-                        continue;
-                    }
+                            return;
+                        };
 
-                    // Fetch venue and date from the schedule for the email summary.
-                    let schedule_details = sd::schedules
-                        .find(schedule_id_val)
-                        .select((sd::venue_name, sd::start_time))
-                        .first::<(Option<String>, chrono::DateTime<chrono::Utc>)>(&mut db_conn)
-                        .optional()
-                        .unwrap_or(None);
-                    let venue_name = schedule_details
-                        .as_ref()
-                        .and_then(|(venue, _)| venue.clone())
-                        .unwrap_or_else(|| "BookIt Venue".into());
-                    let show_time = schedule_details
-                        .map(|(_, start)| {
-                            let ist = chrono::FixedOffset::east_opt(5 * 3600 + 30 * 60)
-                                .expect("valid IST offset");
-                            start
-                                .with_timezone(&ist)
-                                .format("%A, %d %B %Y at %I:%M %p IST")
-                                .to_string()
-                        })
-                        .unwrap_or_else(|| "See your ticket for schedule details".into());
+                        let mut db_conn = match db_pool.get() {
+                            Ok(c) => c,
+                            Err(_) => {
+                                tracing::error!("DB connection failed, routing to DLQ");
+                                let _ = delivery
+                                    .nack(BasicNackOptions {
+                                        multiple: false,
+                                        requeue: false,
+                                    })
+                                    .await;
+                                return;
+                            }
+                        };
 
-                    // Build seat labels (e.g. "A1", "B3") from the DB so the
-                    // PDF shows human-readable seat names, not raw IDs.
-                    let seat_labels: Vec<String> = {
-                        let mut conn_opt = db_pool.get().ok();
-                        if let Some(ref mut conn) = conn_opt {
-                            ss::schedule_seats
-                                .filter(ss::id.eq_any(&seat_ids))
-                                .load::<ScheduleSeat>(conn)
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|s| format!("{}{}", s.row_letter, s.seat_number))
-                                .collect()
-                        } else {
-                            seat_ids.iter().map(|id| id.to_string()).collect()
-                        }
-                    };
-
-                    let pdf_req_body = json!({
-                        "order_id": order_uuid.to_string(),
-                        "user_id": user_id_val,
-                        "show_name": "BookIt Show Ticket",
-                        "show_time": show_time,
-                        "place": "Main Theater",
-                        "venue": venue_name.clone(),
-                        "price": &amount_str,
-                        "seat_numbers": seat_labels.clone()
-                    });
-
-                    let http_server_url = env::var("HTTP_SERVER_URL")
-                        .unwrap_or_else(|_| "http://127.0.0.1:8082".to_string());
-                    let pdf_endpoint = format!(
-                        "{}/api/internal/tickets/generate-pdf",
-                        http_server_url.trim_end_matches('/')
-                    );
-
-                    let existing_pdf = existing_ticket
-                        .as_ref()
-                        .map(|ticket| ticket.pdf_url.as_str())
-                        .filter(|url| valid_pdf_url(url));
-                    let pdf_url = if let Some(url) = existing_pdf {
-                        url.to_string()
-                    } else {
-                        match generate_pdf(&pdf_endpoint, &pdf_req_body).await {
-                            Ok(url) => url,
+                        // Ticket creation and email delivery have separate completion states.
+                        let existing_ticket = match tk::tickets
+                            .filter(tk::order_id.eq(order_uuid))
+                            .first::<Ticket>(&mut db_conn)
+                            .optional()
+                        {
+                            Ok(ticket) => ticket,
                             Err(error) => {
-                                eprintln!(
-                                    "PDF generation failed for order {}: {}; routing to DLQ",
-                                    order_uuid, error
+                                tracing::error!("Ticket lookup failed: {}", error);
+                                let _ = delivery
+                                    .nack(BasicNackOptions {
+                                        multiple: false,
+                                        requeue: false,
+                                    })
+                                    .await;
+                                return;
+                            }
+                        };
+                        let email_sent = ua::user_audits
+                            .filter(ua::order_id.eq(order_uuid))
+                            .filter(ua::action.eq("booking_email_sent"))
+                            .select(ua::id)
+                            .first::<Uuid>(&mut db_conn)
+                            .optional();
+                        match email_sent {
+                            Ok(Some(_)) => {
+                                let _ = delivery.ack(BasicAckOptions::default()).await;
+                                return;
+                            }
+                            Err(error) => {
+                                tracing::error!("Email delivery lookup failed: {}", error);
+                                let _ = delivery
+                                    .nack(BasicNackOptions {
+                                        multiple: false,
+                                        requeue: false,
+                                    })
+                                    .await;
+                                return;
+                            }
+                            Ok(None) => {}
+                        }
+                        if existing_ticket
+                            .as_ref()
+                            .is_some_and(|ticket| ticket.status != "active")
+                        {
+                            let _ = delivery.ack(BasicAckOptions::default()).await;
+                            return;
+                        }
+
+                        // Fetch venue and date from the schedule for the email summary.
+                        let schedule_details = sd::schedules
+                            .find(schedule_id_val)
+                            .select((sd::venue_name, sd::start_time))
+                            .first::<(Option<String>, chrono::DateTime<chrono::Utc>)>(&mut db_conn)
+                            .optional()
+                            .unwrap_or(None);
+                        let venue_name = schedule_details
+                            .as_ref()
+                            .and_then(|(venue, _)| venue.clone())
+                            .unwrap_or_else(|| "BookIt Venue".into());
+                        let show_time = schedule_details
+                            .map(|(_, start)| {
+                                let ist = chrono::FixedOffset::east_opt(5 * 3600 + 30 * 60)
+                                    .expect("valid IST offset");
+                                start
+                                    .with_timezone(&ist)
+                                    .format("%A, %d %B %Y at %I:%M %p IST")
+                                    .to_string()
+                            })
+                            .unwrap_or_else(|| "See your ticket for schedule details".into());
+
+                        // Build seat labels (e.g. "A1", "B3") from the DB so the
+                        // PDF shows human-readable seat names, not raw IDs.
+                        let seat_labels: Vec<String> = {
+                            let mut conn_opt = db_pool.get().ok();
+                            if let Some(ref mut conn) = conn_opt {
+                                ss::schedule_seats
+                                    .filter(ss::id.eq_any(&seat_ids))
+                                    .load::<ScheduleSeat>(conn)
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .map(|s| format!("{}{}", s.row_letter, s.seat_number))
+                                    .collect()
+                            } else {
+                                seat_ids.iter().map(|id| id.to_string()).collect()
+                            }
+                        };
+
+                        let pdf_req_body = json!({
+                            "order_id": order_uuid.to_string(),
+                            "user_id": user_id_val,
+                            "show_name": "BookIt Show Ticket",
+                            "show_time": show_time,
+                            "place": "Main Theater",
+                            "venue": venue_name.clone(),
+                            "price": &amount_str,
+                            "seat_numbers": seat_labels.clone()
+                        });
+
+                        let http_server_url = env::var("HTTP_SERVER_URL")
+                            .unwrap_or_else(|_| "http://127.0.0.1:8082".to_string());
+                        let pdf_endpoint = format!(
+                            "{}/api/internal/tickets/generate-pdf",
+                            http_server_url.trim_end_matches('/')
+                        );
+
+                        let existing_pdf = existing_ticket
+                            .as_ref()
+                            .map(|ticket| ticket.pdf_url.as_str())
+                            .filter(|url| valid_pdf_url(url));
+                        let pdf_url = if let Some(url) = existing_pdf {
+                            url.to_string()
+                        } else {
+                            match generate_pdf(&pdf_endpoint, &pdf_req_body).await {
+                                Ok(url) => url,
+                                Err(error) => {
+                                    tracing::error!(
+                                        "PDF generation failed for order {}: {}; routing to DLQ",
+                                        order_uuid,
+                                        error
+                                    );
+                                    let _ = delivery
+                                        .nack(BasicNackOptions {
+                                            multiple: false,
+                                            requeue: false,
+                                        })
+                                        .await;
+                                    return;
+                                }
+                            }
+                        };
+
+                        let tx_res: Result<(), diesel::result::Error> =
+                            db_conn.transaction(|conn| {
+                                if let Some(ticket) = &existing_ticket {
+                                    diesel::update(tk::tickets.find(ticket.id))
+                                        .set(tk::pdf_url.eq(&pdf_url))
+                                        .execute(conn)?;
+                                    return Ok(());
+                                }
+                                let new_ticket = NewTicket {
+                                    id: Uuid::new_v4(),
+                                    order_id: order_uuid,
+                                    user_id: user_id_val,
+                                    schedule_id: schedule_id_val,
+                                    seat_ids: json!(seat_ids),
+                                    pdf_url: pdf_url.clone(),
+                                    status: "active".into(),
+                                };
+                                diesel::insert_into(tk::tickets)
+                                    .values(&new_ticket)
+                                    .execute(conn)?;
+
+                                let new_audit = NewUserAudit {
+                                    id: Uuid::new_v4(),
+                                    user_id: user_id_val,
+                                    action: "ticket_created".into(),
+                                    order_id: order_uuid,
+                                    amount: BigDecimal::from_str(&amount_str)
+                                        .unwrap_or(BigDecimal::from(0)),
+                                    details: json!({ "pdf_url": pdf_url, "seat_ids": seat_ids }),
+                                };
+                                diesel::insert_into(ua::user_audits)
+                                    .values(&new_audit)
+                                    .execute(conn)?;
+
+                                Ok(())
+                            });
+
+                        if tx_res.is_ok() {
+                            let user_email = get_user_email(&mut db_conn, user_id_val);
+                            let email_data = BookingEmailData {
+                                order_id: order_uuid.to_string(),
+                                venue: venue_name,
+                                show_time,
+                                seat_count: seat_labels.len(),
+                                seats: seat_labels,
+                                amount: amount_str.to_string(),
+                                ticket_url: pdf_url,
+                                support_email: env::var("SUPPORT_EMAIL")
+                                    .unwrap_or_else(|_| "support@bookit4u.shop".into()),
+                            };
+                            if let Err(error) =
+                                send_booking_confirmation(&user_email, &email_data).await
+                            {
+                                tracing::error!(
+                                    "Booking email failed for order {}: {}",
+                                    order_uuid,
+                                    error
                                 );
                                 let _ = delivery
                                     .nack(BasicNackOptions {
@@ -211,152 +283,42 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                                         requeue: false,
                                     })
                                     .await;
-                                continue;
+                                return;
                             }
-                        }
-                    };
-
-                    let tx_res: Result<(), diesel::result::Error> = db_conn.transaction(|conn| {
-                        if let Some(ticket) = &existing_ticket {
-                            diesel::update(tk::tickets.find(ticket.id))
-                                .set(tk::pdf_url.eq(&pdf_url))
-                                .execute(conn)?;
-                            return Ok(());
-                        }
-                        let new_ticket = NewTicket {
-                            id: Uuid::new_v4(),
-                            order_id: order_uuid,
-                            user_id: user_id_val,
-                            schedule_id: schedule_id_val,
-                            seat_ids: json!(seat_ids),
-                            pdf_url: pdf_url.clone(),
-                            status: "active".into(),
-                        };
-                        diesel::insert_into(tk::tickets)
-                            .values(&new_ticket)
-                            .execute(conn)?;
-
-                        let new_audit = NewUserAudit {
-                            id: Uuid::new_v4(),
-                            user_id: user_id_val,
-                            action: "ticket_created".into(),
-                            order_id: order_uuid,
-                            amount: BigDecimal::from_str(&amount_str)
-                                .unwrap_or(BigDecimal::from(0)),
-                            details: json!({ "pdf_url": pdf_url, "seat_ids": seat_ids }),
-                        };
-                        diesel::insert_into(ua::user_audits)
-                            .values(&new_audit)
-                            .execute(conn)?;
-
-                        Ok(())
-                    });
-
-                    if tx_res.is_ok() {
-                        let user_email = get_user_email(&mut db_conn, user_id_val);
-                        let email_data = BookingEmailData {
-                            order_id: order_uuid.to_string(),
-                            venue: venue_name,
-                            show_time,
-                            seat_count: seat_labels.len(),
-                            seats: seat_labels,
-                            amount: amount_str.to_string(),
-                            ticket_url: pdf_url,
-                            support_email: env::var("SUPPORT_EMAIL")
-                                .unwrap_or_else(|_| "support@bookit4u.shop".into()),
-                        };
-                        if let Err(error) =
-                            send_booking_confirmation(&user_email, &email_data).await
-                        {
-                            eprintln!("Booking email failed for order {}: {}", order_uuid, error);
-                            let _ = delivery
-                                .nack(BasicNackOptions {
-                                    multiple: false,
-                                    requeue: false,
-                                })
-                                .await;
-                            continue;
-                        }
-                        let audit = NewUserAudit {
-                            id: Uuid::new_v4(),
-                            user_id: user_id_val,
-                            action: "booking_email_sent".into(),
-                            order_id: order_uuid,
-                            amount: BigDecimal::from_str(&amount_str)
-                                .unwrap_or(BigDecimal::from(0)),
-                            details: json!({ "ticket_url": email_data.ticket_url }),
-                        };
-                        if let Err(error) = diesel::insert_into(ua::user_audits)
-                            .values(&audit)
-                            .execute(&mut db_conn)
-                        {
-                            eprintln!(
-                                "Email sent but delivery audit failed for {}: {}",
-                                order_uuid, error
+                            let audit = NewUserAudit {
+                                id: Uuid::new_v4(),
+                                user_id: user_id_val,
+                                action: "booking_email_sent".into(),
+                                order_id: order_uuid,
+                                amount: BigDecimal::from_str(&amount_str)
+                                    .unwrap_or(BigDecimal::from(0)),
+                                details: json!({ "ticket_url": email_data.ticket_url }),
+                            };
+                            if let Err(error) = diesel::insert_into(ua::user_audits)
+                                .values(&audit)
+                                .execute(&mut db_conn)
+                            {
+                                tracing::error!(
+                                    "Email sent but delivery audit failed for {}: {}",
+                                    order_uuid,
+                                    error
+                                );
+                                let _ = delivery
+                                    .nack(BasicNackOptions {
+                                        multiple: false,
+                                        requeue: false,
+                                    })
+                                    .await;
+                                return;
+                            }
+                            tracing::info!(
+                                "Ticket generated and email sent successfully for order {}",
+                                order_uuid
                             );
-                            let _ = delivery
-                                .nack(BasicNackOptions {
-                                    multiple: false,
-                                    requeue: false,
-                                })
-                                .await;
-                            continue;
-                        }
-                        println!(
-                            "Ticket generated and email sent successfully for order {}",
-                            order_uuid
-                        );
-                        let _ = delivery.ack(BasicAckOptions::default()).await;
-                    } else {
-                        println!("Failed to insert ticket into database, sending to DLQ");
-                        let _ = delivery
-                            .nack(BasicNackOptions {
-                                multiple: false,
-                                requeue: false,
-                            })
-                            .await;
-                    }
-                } else if event_type == "TicketCancelled" {
-                    let order_id_str = payload["order_id"].as_str().unwrap_or_default();
-                    let user_id_val = payload["user_id"].as_i64().unwrap_or(0) as i32;
-                    let seat_ids = parse_seat_ids(&payload);
-                    let amount_val = payload["amount"].clone();
-                    let amount_str = amount_val
-                        .as_str()
-                        .map(|s| s.to_string())
-                        .or_else(|| amount_val.as_f64().map(|f| f.to_string()))
-                        .unwrap_or_else(|| "0".to_string());
-
-                    if let Ok(mut db_conn) = db_pool.get() {
-                        let user_email = get_user_email(&mut db_conn, user_id_val);
-                        let seat_labels: Vec<String> = {
-                            ss::schedule_seats
-                                .filter(ss::id.eq_any(&seat_ids))
-                                .load::<ScheduleSeat>(&mut db_conn)
-                                .unwrap_or_default()
-                                .into_iter()
-                                .map(|s| format!("{}{}", s.row_letter, s.seat_number))
-                                .collect()
-                        };
-                        let seats = if seat_labels.is_empty() {
-                            seat_ids.iter().map(ToString::to_string).collect::<Vec<_>>()
+                            let _ = delivery.ack(BasicAckOptions::default()).await;
                         } else {
-                            seat_labels
-                        };
-                        let email_data = CancellationEmailData {
-                            order_id: order_id_str.to_string(),
-                            seat_count: seats.len(),
-                            seats,
-                            refund_amount: amount_str.to_string(),
-                            support_email: env::var("SUPPORT_EMAIL")
-                                .unwrap_or_else(|_| "support@bookit4u.shop".into()),
-                        };
-                        if let Err(error) =
-                            send_cancellation_confirmation(&user_email, &email_data).await
-                        {
-                            eprintln!(
-                                "Cancellation email failed for order {}: {}",
-                                order_id_str, error
+                            tracing::error!(
+                                "Failed to insert ticket into database, sending to DLQ"
                             );
                             let _ = delivery
                                 .nack(BasicNackOptions {
@@ -364,31 +326,83 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                                     requeue: false,
                                 })
                                 .await;
-                            continue;
                         }
-                    } else {
-                        let _ = delivery
-                            .nack(BasicNackOptions {
-                                multiple: false,
-                                requeue: false,
-                            })
-                            .await;
-                        continue;
-                    }
+                    } else if event_type == "TicketCancelled" {
+                        let order_id_str = payload["order_id"].as_str().unwrap_or_default();
+                        let user_id_val = payload["user_id"].as_i64().unwrap_or(0) as i32;
+                        let seat_ids = parse_seat_ids(&payload);
+                        let amount_val = payload["amount"].clone();
+                        let amount_str = amount_val
+                            .as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| amount_val.as_f64().map(|f| f.to_string()))
+                            .unwrap_or_else(|| "0".to_string());
 
-                    let _ = delivery.ack(BasicAckOptions::default()).await;
-                    println!("Cancellation email sent for order {}", order_id_str);
+                        if let Ok(mut db_conn) = db_pool.get() {
+                            let user_email = get_user_email(&mut db_conn, user_id_val);
+                            let seat_labels: Vec<String> = {
+                                ss::schedule_seats
+                                    .filter(ss::id.eq_any(&seat_ids))
+                                    .load::<ScheduleSeat>(&mut db_conn)
+                                    .unwrap_or_default()
+                                    .into_iter()
+                                    .map(|s| format!("{}{}", s.row_letter, s.seat_number))
+                                    .collect()
+                            };
+                            let seats = if seat_labels.is_empty() {
+                                seat_ids.iter().map(ToString::to_string).collect::<Vec<_>>()
+                            } else {
+                                seat_labels
+                            };
+                            let email_data = CancellationEmailData {
+                                order_id: order_id_str.to_string(),
+                                seat_count: seats.len(),
+                                seats,
+                                refund_amount: amount_str.to_string(),
+                                support_email: env::var("SUPPORT_EMAIL")
+                                    .unwrap_or_else(|_| "support@bookit4u.shop".into()),
+                            };
+                            if let Err(error) =
+                                send_cancellation_confirmation(&user_email, &email_data).await
+                            {
+                                tracing::error!(
+                                    "Cancellation email failed for order {}: {}",
+                                    order_id_str,
+                                    error
+                                );
+                                let _ = delivery
+                                    .nack(BasicNackOptions {
+                                        multiple: false,
+                                        requeue: false,
+                                    })
+                                    .await;
+                                return;
+                            }
+                        } else {
+                            let _ = delivery
+                                .nack(BasicNackOptions {
+                                    multiple: false,
+                                    requeue: false,
+                                })
+                                .await;
+                            return;
+                        }
+
+                        let _ = delivery.ack(BasicAckOptions::default()).await;
+                        tracing::info!("Cancellation email sent for order {}", order_id_str);
+                    } else {
+                        let _ = delivery.ack(BasicAckOptions::default()).await;
+                    }
                 } else {
-                    let _ = delivery.ack(BasicAckOptions::default()).await;
+                    let _ = delivery
+                        .nack(BasicNackOptions {
+                            multiple: false,
+                            requeue: false,
+                        })
+                        .await;
                 }
-            } else {
-                let _ = delivery
-                    .nack(BasicNackOptions {
-                        multiple: false,
-                        requeue: false,
-                    })
-                    .await;
-            }
+            })
+            .await;
         }
     }
 }
@@ -401,6 +415,7 @@ fn valid_pdf_url(value: &str) -> bool {
     })
 }
 
+#[tracing::instrument(skip_all, err, fields(otel.name = "ticket PDF generate", otel.kind = "client"))]
 async fn generate_pdf(endpoint: &str, body: &serde_json::Value) -> Result<String, anyhow::Error> {
     let response = reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
@@ -447,7 +462,8 @@ mod delivery_tests {
             let server = tokio::spawn(async move {
                 let (mut socket, _) = listener.accept().await.unwrap();
                 let mut request = [0; 4096];
-                socket.read(&mut request).await.unwrap();
+                let bytes_read = socket.read(&mut request).await.unwrap();
+                assert!(bytes_read > 0, "PDF test server received an empty request");
                 socket.write_all(body.as_bytes()).await.unwrap();
             });
             assert!(generate_pdf(&endpoint, &json!({})).await.is_err());

@@ -188,6 +188,7 @@ pub async fn request_payment(
         }
     }
     let payload = serde_json::json!({
+        "_trace_context": bookit_telemetry::current_carrier(),
         "payment_request_id": payment_request_id,
         "user_id": user_id,
         "schedule_id": request.schedule_id,
@@ -592,6 +593,7 @@ pub async fn cancel_order(
     }
 
     let payload = serde_json::json!({
+        "_trace_context": bookit_telemetry::current_carrier(),
         "request_type": "cancellation",
         "order_id": order.id.to_string(),
         "user_id": user_id,

@@ -12,7 +12,7 @@ pub async fn watch_redis_stream(state: Arc<AppState>) {
     let group_name = "search-server-group";
     let consumer_name = "search-server-1";
 
-    println!("Watching Redis Stream '{}' for CDC events...", stream_key);
+    tracing::info!("Watching Redis Stream '{}' for CDC events...", stream_key);
 
     // Initialize group. Ignore error if it already exists.
     let mut redis_cli = redis_pool.get().await.unwrap();
@@ -24,7 +24,7 @@ pub async fn watch_redis_stream(state: Arc<AppState>) {
         let mut conn = match redis_pool.get().await {
             Ok(c) => c,
             Err(e) => {
-                eprintln!("Failed to get Redis connection: {}", e);
+                tracing::error!("Failed to get Redis connection: {}", e);
                 tokio::time::sleep(std::time::Duration::from_secs(5)).await;
                 continue;
             }
@@ -55,7 +55,7 @@ pub async fn watch_redis_stream(state: Arc<AppState>) {
                 }
             }
             Err(e) => {
-                eprintln!("Redis stream read error: {}", e);
+                tracing::error!("Redis stream read error: {}", e);
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
             }
         }
@@ -63,21 +63,47 @@ pub async fn watch_redis_stream(state: Arc<AppState>) {
 }
 
 pub async fn process_cdc_event(state: &AppState, event: &serde_json::Value) {
-    if let (Some(op), Some(id)) = (event["op"].as_str(), event["id"].as_str()) {
-        let doc_url = format!("{}/shows/_doc/{}", state.es_url, id);
+    let carrier = bookit_telemetry::payload_carrier(event);
+    let span = bookit_telemetry::operation_span(
+        "cdc:shows process",
+        "consumer",
+        Some(bookit_telemetry::extract_context(&carrier)),
+    );
+    bookit_telemetry::in_span(span, async {
+        if let (Some(op), Some(id)) = (event["op"].as_str(), event["id"].as_str()) {
+            let doc_url = format!("{}/shows/_doc/{}", state.es_url, id);
 
-        match op {
-            "insert" | "update" | "replace" => {
-                if let Some(doc) = event.get("full_document") {
-                    let _ = state.es_client.put(&doc_url).json(doc).send().await;
-                    println!("Synced to ES ({}): {}", op, id);
+            match op {
+                "insert" | "update" | "replace" => {
+                    if let Some(doc) = event.get("full_document") {
+                        match state
+                            .es_client
+                            .put(&doc_url)
+                            .json(doc)
+                            .send()
+                            .await
+                            .and_then(|r| r.error_for_status())
+                        {
+                            Ok(_) => tracing::info!("Synced to ES ({}): {}", op, id),
+                            Err(error) => tracing::error!(%error, "Elasticsearch sync failed"),
+                        }
+                    }
                 }
+                "delete" => {
+                    match state
+                        .es_client
+                        .delete(&doc_url)
+                        .send()
+                        .await
+                        .and_then(|r| r.error_for_status())
+                    {
+                        Ok(_) => tracing::info!("Deleted from ES: {}", id),
+                        Err(error) => tracing::error!(%error, "Elasticsearch delete failed"),
+                    }
+                }
+                _ => {}
             }
-            "delete" => {
-                let _ = state.es_client.delete(&doc_url).send().await;
-                println!("Deleted from ES: {}", id);
-            }
-            _ => {}
         }
-    }
+    })
+    .await;
 }

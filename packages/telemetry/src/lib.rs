@@ -9,6 +9,16 @@ use opentelemetry_sdk::{
 use std::time::Duration;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt, util::SubscriberInitExt};
 
+mod logging;
+mod propagation;
+mod request;
+pub use propagation::*;
+pub use request::*;
+pub use tracing::Instrument;
+
+#[cfg(test)]
+mod tests;
+
 pub fn init_telemetry(service_name: &'static str) {
     let endpoint = std::env::var("OTEL_EXPORTER_OTLP_ENDPOINT")
         .unwrap_or_else(|_| "http://localhost:4317".to_string());
@@ -23,11 +33,20 @@ pub fn init_telemetry(service_name: &'static str) {
     // has no deployment region and should be labelled local rather than using
     // DEPLOY_REGIONS, which may contain a comma-separated cluster list.
     let region = std::env::var("BOOKIT_REGION").unwrap_or_else(|_| "local".into());
-    let resource = Resource::new(vec![
+    let mut attributes = vec![
         KeyValue::new("service.name", service_name),
         KeyValue::new("deployment.environment", environment),
         KeyValue::new("cloud.region", region),
-    ]);
+    ];
+    for (env, key) in [
+        ("K8S_NAMESPACE", "k8s.namespace.name"),
+        ("POD_NAME", "k8s.pod.name"),
+    ] {
+        if let Ok(value) = std::env::var(env) {
+            attributes.push(KeyValue::new(key, value));
+        }
+    }
+    let resource = Resource::default().merge(&Resource::new(attributes));
 
     global::set_text_map_propagator(TraceContextPropagator::new());
 
@@ -74,7 +93,8 @@ pub fn init_telemetry(service_name: &'static str) {
         .flatten_event(true)
         .with_current_span(true)
         .with_span_list(true)
-        .with_target(true);
+        .with_target(true)
+        .event_format(logging::CorrelatedJson { service_name });
 
     // Respect the standard RUST_LOG environment variable for filtering.
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));

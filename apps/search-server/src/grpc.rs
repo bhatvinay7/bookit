@@ -23,6 +23,7 @@ impl SearchService for GrpcSearchService {
         &self,
         request: Request<SearchRequest>,
     ) -> Result<Response<SearchResponse>, Status> {
+        bookit_telemetry::grpc_request(request, "search.SearchService", "Search", |request| async move {
         let req = request.into_inner();
 
         if req.query.trim().is_empty() {
@@ -137,5 +138,6 @@ impl SearchService for GrpcSearchService {
         let results_json = serde_json::to_string(&shows).unwrap_or_else(|_| "[]".to_string());
 
         Ok(Response::new(SearchResponse { results_json }))
+        }).await
     }
 }

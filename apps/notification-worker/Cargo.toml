@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+tracing = "0.1"
 bookit-telemetry = { version = "0.1.0", path = "../../packages/telemetry" }
 futures = "0.3.32"
 lapin = { version = "4.10.0", features = ["rustls"] }

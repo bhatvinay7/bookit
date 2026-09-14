@@ -8,7 +8,6 @@ use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use tower_http::trace::TraceLayer;
 
 use http_server::api;
 use http_server::api::state::AppState;
@@ -34,7 +33,12 @@ async fn main() {
             Method::DELETE,
             Method::OPTIONS,
         ])
-        .allow_headers([header::AUTHORIZATION, header::CONTENT_TYPE]);
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::HeaderName::from_static("traceparent"),
+            header::HeaderName::from_static("tracestate"),
+        ]);
 
     // ── PostgreSQL ────────────────────────────────────────────────────────────
     let db_pool = bookit_db::db::create_db_pool();
@@ -80,7 +84,11 @@ async fn main() {
         .nest("/api/admin", api::admin::admin_routes(app_state.clone()))
         .nest("/api/user", api::user::user_routes(app_state.clone()))
         .layer(cors)
-        .layer(TraceLayer::new_for_http());
+        .layer(bookit_telemetry::HttpTraceLayer::new(|extensions| {
+            extensions
+                .get::<axum::extract::MatchedPath>()
+                .map(|path| path.as_str().to_owned())
+        }));
 
     let http_port = env::var("HTTP_PORT")
         .unwrap_or_else(|_| "8082".into())

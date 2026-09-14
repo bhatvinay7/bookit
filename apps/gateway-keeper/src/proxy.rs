@@ -26,6 +26,7 @@ struct ProxyTarget<'a> {
     circuit_breaker: &'a RedisCircuitBreaker,
 }
 
+#[tracing::instrument(skip_all, fields(otel.name = "search.SearchService/Search", otel.kind = "client"))]
 pub async fn proxy_to_search_server(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
@@ -47,7 +48,8 @@ pub async fn proxy_to_search_server(
             }
         };
 
-    let request = tonic::Request::new(SearchRequest { query, city });
+    let mut request = tonic::Request::new(SearchRequest { query, city });
+    bookit_telemetry::inject_grpc(&mut request);
 
     match client.search(request).await {
         Ok(response) => {
@@ -84,6 +86,7 @@ pub async fn proxy_to_http_server(
     proxy_request(target, method, original_uri, headers, body).await
 }
 
+#[tracing::instrument(skip_all, fields(otel.name = "HTTP http-server", otel.kind = "client"))]
 async fn proxy_request(
     target: ProxyTarget<'_>,
     method: Method,
@@ -118,7 +121,7 @@ async fn proxy_request(
         }
     }
 
-    let req = match req_builder.body(body).build() {
+    let mut req = match req_builder.body(body).build() {
         Ok(r) => r,
         Err(err) => {
             error!(
@@ -131,6 +134,7 @@ async fn proxy_request(
         }
     };
 
+    bookit_telemetry::inject_headers(req.headers_mut());
     match target.client.execute(req).await {
         Ok(res) => {
             let status = res.status();
@@ -139,7 +143,7 @@ async fn proxy_request(
                     .circuit_breaker
                     .record_failure(target.service_name)
                     .await;
-                warn!(
+                error!(
                     service = %target.service_name,
                     status = %status,
                     "Downstream service returned 5xx error; recording failure"

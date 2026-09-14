@@ -94,6 +94,7 @@ pub fn commit_checkout(pool: &DbPool, command: CheckoutCommit) -> QueryResult<()
                 aggregate_id: command.order_id,
                 event_type: "OrderCompleted".into(),
                 payload: json!({
+                    "_trace_context": bookit_telemetry::current_carrier(),
                     "order_id": command.order_id.to_string(),
                     "user_id": command.user_id,
                     "schedule_id": command.schedule_id,
@@ -147,6 +148,7 @@ pub fn commit_cancellation(pool: &DbPool, command: CancellationCommit) -> QueryR
                 aggregate_id: command.order_id,
                 event_type: "TicketCancelled".into(),
                 payload: json!({
+                    "_trace_context": bookit_telemetry::current_carrier(),
                     "order_id": command.order_id.to_string(),
                     "user_id": command.user_id,
                     "schedule_id": command.schedule_id,

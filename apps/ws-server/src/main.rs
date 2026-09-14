@@ -11,7 +11,6 @@ use axum::{
 use serde::Deserialize;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tower_http::trace::TraceLayer;
 
 use grpc_client::GrpcLockClient;
 use handlers::handle_socket;
@@ -76,7 +75,11 @@ async fn main() {
     let app = Router::new()
         .route("/ws", get(ws_handler))
         .with_state(state)
-        .layer(TraceLayer::new_for_http());
+        .layer(bookit_telemetry::HttpTraceLayer::new(|extensions| {
+            extensions
+                .get::<axum::extract::MatchedPath>()
+                .map(|path| path.as_str().to_owned())
+        }));
 
     let ws_port = std::env::var("WS_PORT")
         .unwrap_or_else(|_| "8081".into())

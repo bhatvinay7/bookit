@@ -35,10 +35,12 @@ pub async fn process_messages(
     seat_lock: Arc<dyn SeatLock>,
     redis_pool: RedisPool,
 ) {
-    println!("Listening for payment requests...");
+    tracing::info!("Listening for payment requests...");
 
     while let Some(delivery) = consumer.next().await {
         if let Ok(delivery) = delivery {
+            let span = rmq_conn::delivery_span(&delivery, "payment_processing");
+            bookit_telemetry::in_span(span, async {
             if let Ok(payload) = serde_json::from_slice::<serde_json::Value>(&delivery.data) {
                 let request_type = payload["request_type"].as_str().unwrap_or("checkout");
 
@@ -53,20 +55,20 @@ pub async fn process_messages(
                         .map(|s| s.to_string());
                     let amount_str = payload["amount"].as_str().unwrap_or("0");
 
-                    println!(
+                    tracing::info!(
                         "Processing Cancellation for Order {} (User: {})",
                         order_id_str, user_id_val
                     );
 
                     let Ok(order_uuid) = Uuid::from_str(order_id_str) else {
-                        println!("Invalid order_id UUID: {}", order_id_str);
+                        tracing::error!("Invalid order_id UUID: {}", order_id_str);
                         let _ = delivery
                             .nack(BasicNackOptions {
                                 multiple: false,
                                 requeue: false,
                             })
                             .await;
-                        continue;
+                        return;
                     };
 
                     // Process Refund with Razorpay
@@ -77,14 +79,14 @@ pub async fn process_messages(
                         let amount_paise =
                             (amount_bd.to_string().parse::<f64>().unwrap_or(0.0) * 100.0) as i64;
                         if let Err(e) = process_razorpay_refund(payment_id, amount_paise).await {
-                            println!("Refund processing failed: {:?}", e);
+                            tracing::error!("Refund processing failed: {:?}", e);
                             let _ = delivery
                                 .nack(BasicNackOptions {
                                     multiple: false,
                                     requeue: false,
                                 })
                                 .await;
-                            continue;
+                            return;
                         }
                     }
 
@@ -116,9 +118,9 @@ pub async fn process_messages(
                         }
 
                         let _ = delivery.ack(BasicAckOptions::default()).await;
-                        println!("Cancellation processed successfully!");
+                        tracing::info!("Cancellation processed successfully!");
                     } else {
-                        println!("DB transaction failed during cancellation");
+                        tracing::error!("DB transaction failed during cancellation");
                         let _ = delivery
                             .nack(BasicNackOptions {
                                 multiple: false,
@@ -152,12 +154,12 @@ pub async fn process_messages(
                                 requeue: false,
                             })
                             .await;
-                        continue;
+                        return;
                     };
 
                     if repository::order_exists(&db_pool, payment_request_id) {
                         let _ = delivery.ack(BasicAckOptions::default()).await;
-                        continue;
+                        return;
                     }
 
                     if seat_ids.is_empty() {
@@ -167,10 +169,10 @@ pub async fn process_messages(
                                 requeue: false,
                             })
                             .await;
-                        continue;
+                        return;
                     }
 
-                    println!(
+                    tracing::info!(
                         "Processing Checkout for User {} on Seats {:?}",
                         user_id_val, seat_ids
                     );
@@ -180,7 +182,7 @@ pub async fn process_messages(
                     for &seat_id in &seat_ids {
                         let owner = seat_lock.get_lock_owner(schedule_id_val, seat_id).await;
                         if owner != Some(user_id_val) {
-                            println!(
+                            tracing::error!(
                                 "Lock expired or invalid for seat {}! Sending to DLQ.",
                                 seat_id
                             );
@@ -211,7 +213,7 @@ pub async fn process_messages(
                                 requeue: false,
                             })
                             .await;
-                        continue;
+                        return;
                     }
 
                     let order_uuid = Uuid::new_v4();
@@ -259,9 +261,9 @@ pub async fn process_messages(
                         }
 
                         let _ = delivery.ack(BasicAckOptions::default()).await;
-                        println!("Checkout Processed successfully!");
+                        tracing::info!("Checkout Processed successfully!");
                     } else {
-                        println!("DB transaction failed during checkout");
+                        tracing::error!("DB transaction failed during checkout");
                         let _ = delivery
                             .nack(BasicNackOptions {
                                 multiple: false,
@@ -290,6 +292,7 @@ pub async fn process_messages(
                     })
                     .await;
             }
+            }).await;
         }
     }
 }
