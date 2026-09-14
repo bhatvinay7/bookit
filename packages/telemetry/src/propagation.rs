@@ -115,6 +115,7 @@ pub async fn in_result_span<T, E: std::fmt::Display>(
     .await
 }
 
+#[allow(clippy::result_large_err)]
 pub async fn grpc_request<T, R, F, Fut>(
     request: tonic::Request<T>,
     service: &'static str,
