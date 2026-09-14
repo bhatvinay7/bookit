@@ -183,7 +183,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/v1/showtimes/{showtime_id}/seats/cancel",
             post(cancel_seats),
         )
-        .route("/health", axum::routing::any(proxy::proxy_to_http_server))
+        // Gateway readiness must report the gateway's own ability to accept
+        // traffic. Proxying this to http-server made an unavailable backend
+        // remove the gateway from Service endpoints as well, producing 503s
+        // for every API route.
+        .route("/health", axum::routing::get(proxy::health))
         .nest("/api", proxy_router)
         .with_state(state)
         .layer(configured_cors())
