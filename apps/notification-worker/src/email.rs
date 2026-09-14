@@ -64,6 +64,7 @@ pub async fn send_cancellation_confirmation(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all, err, fields(otel.name = "smtp send", otel.kind = "client"))]
 async fn send_rendered_email<T: Serialize>(
     recipient_email: &str,
     subject: &str,
@@ -122,7 +123,7 @@ async fn send_rendered_email<T: Serialize>(
             )
         })?;
 
-    println!("Email sent successfully to {}", recipient_email);
+    tracing::info!("Email sent successfully");
     Ok(())
 }
 

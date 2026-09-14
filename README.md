@@ -421,9 +421,9 @@ observability baseline has these explicit bounds:
 
 | Store/path | Checked-in bound | Meaning |
 |---|---:|---|
-| Loki | 50 GiB PVC | Persistent baseline log capacity before retention/compaction overhead |
-| Tempo | Node-local `/tmp` | Ephemeral; traces can disappear on pod replacement |
-| Prometheus | 15-day retention | Time bound configured; persistent volume size is not explicitly set |
+| Loki | 10 GiB PVC | Persistent baseline log capacity before retention/compaction overhead |
+| Tempo | 10 GiB PVC, 15-day retention | Blocks and WAL survive pod replacement; single replica |
+| Prometheus | 10 GiB PVC, 15-day retention | Retention also depends on available disk capacity |
 | OTEL Collector | 2 × 1 GiB memory limit | Two replicas with a 768 MiB memory limiter each |
 | OTEL trace export queue | 10,000 items per collector replica | Bounded retry absorption, not durable storage |
 | Fluent Bit memory buffer | 50 MiB per node | Additional filesystem backlog is node-local |
@@ -441,8 +441,7 @@ prom_samples_per_day = active_series × (86,400 ÷ scrape_interval_seconds)
 ```
 
 For sustained production volume, move Loki and Tempo to object-backed,
-distributed deployments and configure a persistent Prometheus volume or remote
-write. Enforce log rotation and cardinality budgets before raising retention.
+distributed deployments and consider Prometheus remote write. Enforce log rotation and cardinality budgets before raising retention.
 
 ## Observability architecture
 
@@ -450,9 +449,8 @@ write. Enforce log rotation and cardinality budgets before raising retention.
 flowchart TD
     APP[Rust services] -->|JSON stdout/stderr| CRI[/Container log files/]
     CRI --> FB[Fluent Bit on each node]
-    FB -->|OTLP HTTP logs| OTEL[2× OTEL Collector]
-    APP -->|OTLP gRPC traces + metrics| OTEL
-    OTEL -->|logs| LOKI[(Loki)]
+    FB -->|Loki push API| LOKI[(Loki)]
+    APP -->|OTLP gRPC traces + metrics| OTEL[OTEL Collector]
     OTEL -->|traces| TEMPO[(Tempo)]
     OTEL -->|:8889 metrics| PROM[(Prometheus)]
     NODE[Node Exporter + kubelet] --> PROM
@@ -464,8 +462,9 @@ flowchart TD
 
 HTTP entrypoints create tracing spans, services emit structured JSON logs, and
 the shared telemetry package attaches service and environment fields.
-Complete end-to-end traces additionally require W3C `traceparent` injection and
-extraction at every HTTP, gRPC, RabbitMQ and Redis Stream boundary. Individual
+HTTP/gRPC forwarding, RabbitMQ deliveries, the durable payment outbox and CDC
+Redis Stream messages now carry W3C trace context. Next.js initializes a server
+OpenTelemetry SDK. See [telemetry coverage](TELEMETRY.md) for limits and checks. Individual
 PostgreSQL, MongoDB, Redis and Elasticsearch operations need child spans before
 the system can claim full query-level tracing.
 

@@ -1,6 +1,7 @@
 use serde_json::json;
 use std::env;
 
+#[tracing::instrument(skip_all, err, fields(otel.name = "razorpay refund", otel.kind = "client"))]
 pub async fn process_razorpay_refund(
     payment_id: &str,
     amount_paise: i64,

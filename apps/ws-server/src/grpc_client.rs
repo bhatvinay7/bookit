@@ -2,6 +2,8 @@ use locking::LockSlotRequest;
 use locking::slot_locking_service_client::SlotLockingServiceClient;
 use tonic::transport::Channel;
 
+type LockSlotResponse = (bool, String, Vec<i32>, Vec<i32>);
+
 pub mod locking {
     tonic::include_proto!("locking");
 }
@@ -18,6 +20,7 @@ impl GrpcLockClient {
         Ok(Self { client })
     }
 
+    #[tracing::instrument(skip_all, err, fields(otel.name = "locking.SlotLockingService/LockSlot", otel.kind = "client"))]
     pub async fn lock_slot(
         &self,
         showtime_id: i32,
@@ -25,10 +28,10 @@ impl GrpcLockClient {
         seat_indices: Vec<i32>,
         total_seat_count: i32,
         user_id: i32,
-    ) -> Result<(bool, String, Vec<i32>, Vec<i32>), Box<dyn std::error::Error + Send + Sync>> {
+    ) -> Result<LockSlotResponse, Box<dyn std::error::Error + Send + Sync>> {
         let mut client = self.client.clone();
 
-        let request = tonic::Request::new(LockSlotRequest {
+        let mut request = tonic::Request::new(LockSlotRequest {
             showtime_id,
             seat_ids,
             user_id,
@@ -36,6 +39,7 @@ impl GrpcLockClient {
             seat_indices,
         });
 
+        bookit_telemetry::inject_grpc(&mut request);
         match client.lock_slot(request).await {
             Ok(response) => {
                 let inner = response.into_inner();
@@ -50,6 +54,7 @@ impl GrpcLockClient {
         }
     }
 
+    #[tracing::instrument(skip_all, err, fields(otel.name = "locking.SlotLockingService/UnlockSlot", otel.kind = "client"))]
     pub async fn unlock_slot(
         &self,
         showtime_id: i32,
@@ -60,7 +65,7 @@ impl GrpcLockClient {
     ) -> Result<(bool, String, Vec<i32>), Box<dyn std::error::Error + Send + Sync>> {
         let mut client = self.client.clone();
 
-        let request = tonic::Request::new(locking::UnlockSlotRequest {
+        let mut request = tonic::Request::new(locking::UnlockSlotRequest {
             showtime_id,
             seat_ids,
             user_id,
@@ -68,6 +73,7 @@ impl GrpcLockClient {
             seat_indices,
         });
 
+        bookit_telemetry::inject_grpc(&mut request);
         match client.unlock_slot(request).await {
             Ok(response) => {
                 let inner = response.into_inner();

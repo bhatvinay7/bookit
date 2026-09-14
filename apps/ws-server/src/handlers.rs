@@ -74,60 +74,71 @@ pub async fn handle_socket(
     let mut recv_task = tokio::spawn(async move {
         while let Some(Ok(Message::Text(text))) = receiver.next().await {
             if let Ok(req) = serde_json::from_str::<WsRequest>(&text) {
-                match req {
-                    WsRequest::Subscribe { room_id } => {
-                        state_clone
-                            .hooks
-                            .on_subscribe(user_id, &socket_id_clone, room_id)
-                            .await;
+                let operation = match &req {
+                    WsRequest::Subscribe { .. } => "websocket.subscribe",
+                    WsRequest::Unsubscribe { .. } => "websocket.unsubscribe",
+                    WsRequest::LockSeats { .. } => "websocket.lock_seats",
+                    WsRequest::UnlockSeats { .. } => "websocket.unlock_seats",
+                    WsRequest::SyncLocks { .. } => "websocket.sync_locks",
+                };
+                let span = bookit_telemetry::operation_span(operation, "server", None);
+                bookit_telemetry::in_span(span, async {
+                    match req {
+                        WsRequest::Subscribe { room_id } => {
+                            state_clone
+                                .hooks
+                                .on_subscribe(user_id, &socket_id_clone, room_id)
+                                .await;
+                        }
+                        WsRequest::Unsubscribe { room_id } => {
+                            state_clone
+                                .hooks
+                                .on_unsubscribe(&socket_id_clone, room_id)
+                                .await;
+                        }
+                        WsRequest::LockSeats {
+                            room_id,
+                            seat_ids,
+                            seat_indices,
+                            total_seat_count,
+                        } => {
+                            state_clone
+                                .hooks
+                                .on_lock_request(
+                                    user_id,
+                                    room_id,
+                                    seat_ids,
+                                    seat_indices,
+                                    total_seat_count,
+                                )
+                                .await;
+                        }
+                        WsRequest::UnlockSeats {
+                            room_id,
+                            seat_ids,
+                            seat_indices,
+                            total_seat_count,
+                        } => {
+                            state_clone
+                                .hooks
+                                .on_unlock_request(
+                                    user_id,
+                                    room_id,
+                                    seat_ids,
+                                    seat_indices,
+                                    total_seat_count,
+                                )
+                                .await;
+                        }
+                        WsRequest::SyncLocks { room_id } => {
+                            state_clone
+                                .hooks
+                                .on_sync_locks_request(user_id, room_id)
+                                .await;
+                        }
                     }
-                    WsRequest::Unsubscribe { room_id } => {
-                        state_clone
-                            .hooks
-                            .on_unsubscribe(&socket_id_clone, room_id)
-                            .await;
-                    }
-                    WsRequest::LockSeats {
-                        room_id,
-                        seat_ids,
-                        seat_indices,
-                        total_seat_count,
-                    } => {
-                        state_clone
-                            .hooks
-                            .on_lock_request(
-                                user_id,
-                                room_id,
-                                seat_ids,
-                                seat_indices,
-                                total_seat_count,
-                            )
-                            .await;
-                    }
-                    WsRequest::UnlockSeats {
-                        room_id,
-                        seat_ids,
-                        seat_indices,
-                        total_seat_count,
-                    } => {
-                        state_clone
-                            .hooks
-                            .on_unlock_request(
-                                user_id,
-                                room_id,
-                                seat_ids,
-                                seat_indices,
-                                total_seat_count,
-                            )
-                            .await;
-                    }
-                    WsRequest::SyncLocks { room_id } => {
-                        state_clone
-                            .hooks
-                            .on_sync_locks_request(user_id, room_id)
-                            .await;
-                    }
-                }
+                })
+                .await;
             }
         }
     });

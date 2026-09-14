@@ -53,38 +53,50 @@ pub async fn watch_redis_stream(
                 while let Some(event_result) = stream.next().await {
                     match event_result {
                         Ok(event) => {
-                            let op_type = event.operation_type;
-                            let doc_id = event
-                                .document_key
-                                .as_ref()
-                                .and_then(|key| key.get("_id"))
-                                .and_then(|id| id.as_object_id())
-                                .map(|oid| oid.to_hex());
+                            let span = bookit_telemetry::operation_span(
+                                "mongodb.shows change",
+                                "consumer",
+                                None,
+                            );
+                            bookit_telemetry::in_span(span, async {
+                                let op_type = event.operation_type;
+                                let doc_id = event
+                                    .document_key
+                                    .as_ref()
+                                    .and_then(|key| key.get("_id"))
+                                    .and_then(|id| id.as_object_id())
+                                    .map(|oid| oid.to_hex());
 
-                            if let Some(id) = doc_id {
-                                info!("Processing {:?} on document {}", op_type, id);
+                                if let Some(id) = doc_id {
+                                    info!("Processing {:?} on document {}", op_type, id);
 
-                                let payload = serde_json::json!({
-                                    "op": format!("{:?}", op_type).to_lowercase(),
-                                    "id": id,
-                                    "full_document": event.full_document,
-                                });
+                                    let payload = serde_json::json!({
+                                        "_trace_context": bookit_telemetry::current_carrier(),
+                                        "op": format!("{:?}", op_type).to_lowercase(),
+                                        "id": id,
+                                        "full_document": event.full_document,
+                                    });
 
-                                // Push to Redis Stream
-                                if let Ok(payload_str) = serde_json::to_string(&payload) {
-                                    let _: Result<(), _> = redis_cli
-                                        .xadd(stream_key, "*", &[("payload", &payload_str)])
-                                        .await;
+                                    // Push to Redis Stream
+                                    if let Ok(payload_str) = serde_json::to_string(&payload) {
+                                        let published: redis::RedisResult<()> = redis_cli
+                                            .xadd(stream_key, "*", &[("payload", &payload_str)])
+                                            .await;
+                                        if let Err(error) = published {
+                                            tracing::error!(%error, "CDC stream publish failed");
+                                        }
+                                    }
+
+                                    // Save resume token
+                                    if let Ok(token_json) = mongodb::bson::to_document(&event.id)
+                                        && let Ok(token_str) = serde_json::to_string(&token_json)
+                                    {
+                                        let _: Result<(), _> =
+                                            redis_cli.set(resume_token_key, token_str).await;
+                                    }
                                 }
-
-                                // Save resume token
-                                if let Ok(token_json) = mongodb::bson::to_document(&event.id)
-                                    && let Ok(token_str) = serde_json::to_string(&token_json)
-                                {
-                                    let _: Result<(), _> =
-                                        redis_cli.set(resume_token_key, token_str).await;
-                                }
-                            }
+                            })
+                            .await;
                         }
                         Err(e) => {
                             error!("Change stream error: {}", e);

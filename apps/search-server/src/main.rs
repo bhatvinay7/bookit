@@ -14,7 +14,6 @@ use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-use tower_http::trace::TraceLayer;
 
 use crate::types::AppState;
 
@@ -80,7 +79,11 @@ async fn main() {
         .route("/health", get(|| async { "OK" }))
         .route("/search", get(api::search_handler))
         .layer(cors)
-        .layer(TraceLayer::new_for_http())
+        .layer(bookit_telemetry::HttpTraceLayer::new(|extensions| {
+            extensions
+                .get::<axum::extract::MatchedPath>()
+                .map(|path| path.as_str().to_owned())
+        }))
         .with_state(app_state);
 
     let http_port = env::var("SEARCH_HTTP_PORT")

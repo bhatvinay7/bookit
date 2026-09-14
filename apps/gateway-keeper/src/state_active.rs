@@ -1,3 +1,4 @@
+use bookit_telemetry::Instrument;
 use std::{
     panic::AssertUnwindSafe,
     sync::{
@@ -188,11 +189,13 @@ enum GatewayTask {
     Lock {
         user_id: i32,
         seat_ids: Vec<i32>,
+        span: tracing::Span,
         response: oneshot::Sender<LockResult>,
     },
     Cancel {
         user_id: i32,
         seat_ids: Vec<i32>,
+        span: tracing::Span,
         response: oneshot::Sender<Vec<i32>>,
     },
 }
@@ -288,6 +291,7 @@ impl GatewayState {
                 user_id,
                 seat_ids: admitted.clone(),
                 response,
+                span: tracing::Span::current(),
             })
             .is_err()
         {
@@ -347,6 +351,7 @@ impl GatewayState {
                 user_id,
                 seat_ids,
                 response,
+                span: tracing::Span::current(),
             })
             .await
             .map_err(|_| "show actor is unavailable".to_string())?;
@@ -459,9 +464,10 @@ impl GatewayState {
                     user_id,
                     seat_ids,
                     response,
+                    span,
                 } => {
                     let fallback = seat_ids.clone();
-                    let result = AssertUnwindSafe(self.acquire_and_publish(user_id, key, seat_ids))
+                    let result = AssertUnwindSafe(self.acquire_and_publish(user_id, key, seat_ids).instrument(span))
                         .catch_unwind()
                         .await;
                     match result {
@@ -479,8 +485,9 @@ impl GatewayState {
                     user_id,
                     seat_ids,
                     response,
+                    span,
                 } => {
-                    let result = self.cancel_committed(user_id, key, seat_ids).await;
+                    let result = self.cancel_committed(user_id, key, seat_ids).instrument(span).await;
                     let _ = response.send(result);
                 }
             }
@@ -538,6 +545,7 @@ impl GatewayState {
         }
     }
 
+    #[tracing::instrument(skip_all, fields(otel.name = "locking_queue publish", otel.kind = "producer"))]
     async fn publish_to_locking_queue(
         &self,
         action: &str,
@@ -546,6 +554,7 @@ impl GatewayState {
         seat_ids: Vec<i32>,
     ) -> bool {
         let Some(channel) = &self.rmq_channel else {
+            tracing::error!("RabbitMQ channel unavailable");
             return false;
         };
         let message = SeatLockMessage {
@@ -558,16 +567,19 @@ impl GatewayState {
         let Ok(payload) = serde_json::to_vec(&message) else {
             return false;
         };
-        channel
+        let result = channel
             .basic_publish(
                 "".into(),
                 "locking_queue".into(),
                 lapin::options::BasicPublishOptions::default(),
                 &payload,
-                lapin::BasicProperties::default(),
+                rmq_conn::traced_properties(lapin::BasicProperties::default()),
             )
-            .await
-            .is_ok()
+            .await;
+        if let Err(error) = &result {
+            tracing::error!(%error, "Lock message publish failed");
+        }
+        result.is_ok()
     }
 
     fn clear_admission(&self, key: ShowKey, seat_ids: &[i32]) {

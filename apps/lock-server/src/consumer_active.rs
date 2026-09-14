@@ -101,11 +101,12 @@ impl LockServerActors {
                 .expect("lock-server semaphore closed");
             let seat_ids = task.message.seat_ids.clone();
             self.mark_processing(showtime_id, &seat_ids);
-            let result = AssertUnwindSafe(process_lock_request(
+            let span = rmq_conn::delivery_span(&task.delivery, "locking_queue");
+            let result = AssertUnwindSafe(bookit_telemetry::in_span(span, process_lock_request(
                 &task.message,
                 &self.seat_lock,
                 &self.redis_pool,
-            ))
+            )))
             .catch_unwind()
             .await;
             self.clear_processing(showtime_id, &seat_ids);

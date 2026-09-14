@@ -20,7 +20,6 @@ use jsonwebtoken::{Algorithm, DecodingKey, Validation};
 use redis_conn::{SingleNodeLock, establish_pool};
 use serde::{Deserialize, Serialize};
 use tower_http::cors::{AllowOrigin, CorsLayer};
-use tower_http::trace::TraceLayer;
 use tracing::{error, info};
 
 use crate::{grpc_service::GatewayLockingService, state::GatewayState};
@@ -188,7 +187,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .nest("/api", proxy_router)
         .with_state(state)
         .layer(configured_cors())
-        .layer(TraceLayer::new_for_http());
+        .layer(bookit_telemetry::HttpTraceLayer::new(|extensions| {
+            extensions
+                .get::<axum::extract::MatchedPath>()
+                .map(|path| path.as_str().to_owned())
+        }));
 
     let addr: SocketAddr = std::env::var("GATEWAY_KEEPER_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
@@ -218,6 +221,8 @@ fn configured_cors() -> CorsLayer {
         .allow_headers([
             axum::http::header::AUTHORIZATION,
             axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderName::from_static("traceparent"),
+            axum::http::HeaderName::from_static("tracestate"),
         ])
 }
 
