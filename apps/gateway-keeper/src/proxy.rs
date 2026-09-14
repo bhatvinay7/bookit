@@ -166,9 +166,9 @@ async fn proxy_request(
                 }
             }
 
-            let response_bytes = res.bytes().await.unwrap_or_default();
+            let stream = res.bytes_stream();
             response_builder
-                .body(Body::from(response_bytes))
+                .body(Body::from_stream(stream))
                 .unwrap_or_else(|_| {
                     (
                         StatusCode::INTERNAL_SERVER_ERROR,
