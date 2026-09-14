@@ -26,6 +26,12 @@ struct ProxyTarget<'a> {
     circuit_breaker: &'a RedisCircuitBreaker,
 }
 
+/// Kubernetes liveness/readiness endpoint for the gateway process itself.
+/// Downstream availability is handled independently by the circuit breaker.
+pub async fn health() -> &'static str {
+    "OK"
+}
+
 #[tracing::instrument(skip_all, fields(otel.name = "search.SearchService/Search", otel.kind = "client"))]
 pub async fn proxy_to_search_server(
     State(state): State<Arc<AppState>>,
@@ -138,19 +144,10 @@ async fn proxy_request(
     match target.client.execute(req).await {
         Ok(res) => {
             let status = res.status();
-            if status.is_server_error() {
-                target
-                    .circuit_breaker
-                    .record_failure(target.service_name)
-                    .await;
-                error!(
-                    service = %target.service_name,
-                    status = %status,
-                    "Downstream service returned 5xx error; recording failure"
-                );
-                return RedisCircuitBreaker::service_busy_response();
-            }
-
+            // An HTTP response, even a 5xx from an application endpoint, proves
+            // the upstream is reachable. Propagate it unchanged instead of
+            // opening the transport circuit and turning all later admin/API
+            // requests into gateway-generated 503s.
             target
                 .circuit_breaker
                 .record_success(target.service_name)
