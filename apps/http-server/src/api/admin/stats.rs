@@ -84,7 +84,9 @@ pub async fn get_stats(
         .database(&state.mongo_db_name)
         .collection::<Show>("shows");
     let total_shows = col
-        .count_documents(doc! { "deleted_at": { "$exists": false } })
+        // Active shows use `deleted_at: null`; this also matches legacy
+        // documents where the field was omitted.
+        .count_documents(doc! { "deleted_at": null })
         .await
         .unwrap_or(0);
 

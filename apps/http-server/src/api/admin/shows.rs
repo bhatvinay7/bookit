@@ -8,7 +8,7 @@ use bson::{doc, oid::ObjectId};
 use chrono::Utc;
 use mongodb::Collection;
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
+use std::{collections::HashMap, env, sync::Arc};
 
 use crate::api::state::AppState;
 use crate::helpers::errors::AppError;
@@ -21,6 +21,87 @@ fn shows_col(state: &AppState) -> Collection<Show> {
         .mongo_client
         .database(&state.mongo_db_name)
         .collection("shows")
+}
+
+/// Search the admin catalogue in Elasticsearch. `None` means Elasticsearch is
+/// unavailable or returned an invalid response; callers must fall back to the
+/// MongoDB search path in that case. An empty vector is a valid ES result.
+async fn elasticsearch_show_ids(
+    search: &str,
+    show_type: Option<&str>,
+    from: u64,
+    limit: i64,
+) -> Option<Vec<String>> {
+    let base_url = env::var("ELASTICSEARCH_URL").ok()?;
+    let base_url = base_url.trim_end_matches('/');
+    if base_url.is_empty() {
+        return None;
+    }
+
+    let mut filters = Vec::new();
+    if let Some(show_type) = show_type.filter(|value| !value.trim().is_empty()) {
+        filters.push(serde_json::json!({ "term": { "show_type": show_type } }));
+    }
+
+    let body = serde_json::json!({
+        "from": from,
+        "size": limit,
+        "_source": false,
+        "query": {
+            "bool": {
+                "must": [{
+                    "multi_match": {
+                        "query": search,
+                        "fields": ["title^3", "tags^2", "venue", "description", "category_ids"],
+                        "fuzziness": "AUTO"
+                    }
+                }],
+                "filter": filters,
+                "must_not": [{ "exists": { "field": "deleted_at" } }]
+            }
+        }
+    });
+
+    let client = reqwest::Client::builder()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(4))
+        .build()
+        .ok()?;
+    let response = client
+        .post(format!("{base_url}/shows/_search"))
+        .json(&body)
+        .send()
+        .await;
+
+    let response = match response {
+        Ok(response) if response.status().is_success() => response,
+        Ok(response) => {
+            tracing::warn!(status = %response.status(), "Elasticsearch admin show search failed");
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(%error, "Elasticsearch admin show search unavailable; using MongoDB fallback");
+            return None;
+        }
+    };
+
+    let payload: serde_json::Value = match response.json().await {
+        Ok(payload) => payload,
+        Err(error) => {
+            tracing::warn!(%error, "Elasticsearch admin show search returned invalid JSON");
+            return None;
+        }
+    };
+    let hits = payload
+        .pointer("/hits/hits")
+        .and_then(serde_json::Value::as_array)?;
+
+    Some(
+        hits.iter()
+            .filter_map(|hit| hit.get("_id").and_then(serde_json::Value::as_str))
+            .map(str::to_owned)
+            .collect(),
+    )
 }
 
 // ─── List shows ───────────────────────────────────────────────────────────────
@@ -50,11 +131,33 @@ pub async fn list_shows(
 ) -> Result<impl IntoResponse, AppError> {
     let col = shows_col(&state);
 
-    let mut filter = doc! { "deleted_at": { "$exists": false } };
+    // Active shows created by the current schema store `deleted_at: null`.
+    // MongoDB's null match also includes legacy records where the field is
+    // absent, so both document versions remain visible to administrators.
+    let mut filter = doc! { "deleted_at": null };
     if let Some(st) = &q.show_type {
         filter.insert("show_type", st.as_str());
     }
-    if let Some(s) = &q.search {
+    let limit = q.limit.unwrap_or(50).min(200) as i64;
+    let page = q.page.unwrap_or(0);
+    let search = q
+        .search
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let elastic_ids = if let Some(search) = search {
+        elasticsearch_show_ids(search, q.show_type.as_deref(), page * limit as u64, limit).await
+    } else {
+        None
+    };
+
+    if let Some(ids) = &elastic_ids {
+        let ids: Vec<ObjectId> = ids
+            .iter()
+            .filter_map(|id| ObjectId::parse_str(id).ok())
+            .collect();
+        filter.insert("_id", doc! { "$in": ids });
+    } else if let Some(s) = search {
         filter.insert(
             "$or",
             bson::to_bson(&[
@@ -64,8 +167,13 @@ pub async fn list_shows(
         );
     }
 
-    let limit = q.limit.unwrap_or(50).min(200) as i64;
-    let skip = (q.page.unwrap_or(0)) * limit as u64;
+    // Elasticsearch already applies pagination. MongoDB only needs to skip
+    // records when using the fallback path.
+    let skip = if elastic_ids.is_some() {
+        0
+    } else {
+        page * limit as u64
+    };
 
     let opts = mongodb::options::FindOptions::builder()
         .limit(limit)
@@ -85,9 +193,16 @@ pub async fn list_shows(
         .await
         .map_err(|e| AppError::internal(e.to_string()))?
     {
-        let show = cursor
-            .deserialize_current()
-            .map_err(|e| AppError::internal(e.to_string()))?;
+        // A legacy or malformed document must not turn an otherwise valid
+        // admin collection into a 5xx response. Skip it and keep serving the
+        // remaining shows; the warning identifies data that needs repair.
+        let show = match cursor.deserialize_current() {
+            Ok(show) => show,
+            Err(error) => {
+                tracing::warn!(%error, "skipping malformed show document in admin list");
+                continue;
+            }
+        };
         let id = show.id.map(|o| o.to_hex()).unwrap_or_default();
         let mut val = serde_json::to_value(&show)
             .map_err(|e| AppError::internal(format!("Failed to serialize show: {e}")))?;
@@ -96,6 +211,21 @@ pub async fn list_shows(
             obj.remove("_id");
         }
         results.push(val);
+    }
+
+    if let Some(ids) = elastic_ids {
+        let rank: HashMap<&str, usize> = ids
+            .iter()
+            .enumerate()
+            .map(|(position, id)| (id.as_str(), position))
+            .collect();
+        results.sort_by_key(|show| {
+            show.get("id")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|id| rank.get(id))
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
     }
 
     Ok(Json(results))
