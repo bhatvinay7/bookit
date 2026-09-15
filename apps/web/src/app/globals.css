@@ -2,6 +2,9 @@
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800;900&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
 @import 'tailwindcss';
 
+/* next-themes toggles data-dark="true" instead of Tailwind's default .dark class. */
+@custom-variant dark (&:where([data-dark='true'], [data-dark='true'] *));
+
 @theme {
   --font-display: 'Outfit', 'Quicksand', system-ui, sans-serif;
   --font-sans: 'DM Sans', 'Quicksand', system-ui, sans-serif;
@@ -19,6 +22,7 @@
 }
 
 :root {
+  color-scheme: light;
   --bg:             #f8fafc;
   --bg-raised:      #ffffff;
   --bg-subtle:      #f1f5f9;
@@ -53,6 +57,7 @@
 }
 
 [data-dark='true'] {
+  color-scheme: dark;
   /* ════ Outer Layer (Deepest/Highest Contrast) ════ */
   --bg:             #020617; /* Obsidian Slate */
   
@@ -102,7 +107,9 @@
 
 * { box-sizing: border-box; }
 
-html, body { margin: 0; padding: 0; }
+html, body { min-height: 100%; margin: 0; padding: 0; }
+
+html { background: var(--bg); }
 
 body {
   background-color: #f8fafc;
@@ -116,9 +123,21 @@ body {
   background-repeat: no-repeat;
   background-size: cover;
   color: var(--text-primary);
+  min-height: 100vh;
+  transition: background-color 180ms ease, color 180ms ease;
 }
 
-::-webkit-scrollbar { width: 0; height: 0; }
+::selection { background: rgba(109, 40, 217, 0.24); color: var(--text-primary); }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: color-mix(in srgb, var(--text-muted) 55%, transparent); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 .no-scroll-bar {
   overflow-x: auto;
@@ -154,23 +173,24 @@ body {
   -webkit-mask-image: linear-gradient(to bottom, black 50%, transparent 100%);
 }
 
-/* Base body background for dark mode with pattern */
+/* Stable dark surface: no remote image request or low-contrast overlay. */
 [data-dark='true'] body {
   background-color: var(--bg);
-  background-image: url('https://06bf40248bb8be246c301bbbda450a61.r2.cloudflarestorage.com/1784913667985-seventy_two_hours_ver2.jpg'); /* fallback vector image */
-  background-blend-mode: overlay;
-  background-size: cover;
-  background-position: center;
+  background-image:
+    radial-gradient(ellipse 70vw 55vh at 8% -10%, rgba(79, 70, 229, 0.24) 0%, transparent 68%),
+    radial-gradient(ellipse 60vw 50vh at 96% 0%, rgba(14, 165, 233, 0.14) 0%, transparent 70%),
+    radial-gradient(ellipse 75vw 60vh at 52% 112%, rgba(139, 92, 246, 0.14) 0%, transparent 72%),
+    linear-gradient(180deg, #020617 0%, #081126 54%, #020617 100%);
   background-attachment: fixed;
 }
 
-[data-dark='true'] body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  background-color: rgba(2, 6, 23, 0.90); /* 10% opacity for vector */
-  z-index: -1;
-  pointer-events: none;
+[data-dark='true'] .glass {
+  background: rgba(15, 23, 42, 0.76);
+  border-color: rgba(148, 163, 184, 0.18);
+}
+
+[data-dark='true'] .card-shadow {
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.26), 0 1px 0 rgba(255, 255, 255, 0.04) inset;
 }
 
 /* ════ REFER UI UTILITIES ════ */

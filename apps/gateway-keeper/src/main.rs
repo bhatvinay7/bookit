@@ -174,13 +174,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/admin/{*path}",
             axum::routing::any(proxy::proxy_to_authenticated_http_server),
         )
-        .route(
-            "/user",
-            axum::routing::any(proxy::proxy_to_authenticated_http_server),
-        )
+        // User APIs contain both public catalogue endpoints and protected
+        // account/payment endpoints. HTTP-server applies authentication at the
+        // individual protected handlers, so public catalogue requests remain
+        // available without a Bearer token.
+        .route("/user", axum::routing::any(proxy::proxy_to_http_server))
         .route(
             "/user/{*path}",
-            axum::routing::any(proxy::proxy_to_authenticated_http_server),
+            axum::routing::any(proxy::proxy_to_http_server),
         );
 
     let app = Router::new()

@@ -18,6 +18,14 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
       return;
     }
 
+    // Admin routes use their own guard and `admin_token`. Do not require the
+    // normal-user token here or a successful admin login is redirected away
+    // before the admin layout can validate its token and role.
+    if (pathname?.startsWith("/admin")) {
+      setStatus("authorized");
+      return;
+    }
+
     const token = localStorage.getItem("user_token");
     if (token) {
       setStatus("authorized");
