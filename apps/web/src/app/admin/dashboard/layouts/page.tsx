@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { SeatLayout, SeatLayoutSeat, LayoutSeatClass, ShowType, SeatInput } from "@/types";
 import { useToast } from "../components/ToastProvider";
 import { Pagination, usePagination } from "../components/Pagination";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+import { adminFetchJson, collectionOrThrow } from "@/lib/adminApi";
 
 // ─── Seat Picker (custom visual grid — react-seat-picker wrapper) ─────────────
 // react-seat-picker v1 expects a specific row format; we wrap it here.
@@ -102,6 +101,7 @@ export default function AdminLayoutsPage() {
   const { addToast } = useToast();
   const [layouts,    setLayouts]    = useState<SeatLayout[]>([]);
   const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState("");
   const [preview,    setPreview]    = useState<{ layout: SeatLayout; seats: SeatLayoutSeat[] } | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState({ name: "", show_type: "Movie" as ShowType, description: "", layout_shape: "rectangular" });
@@ -120,43 +120,43 @@ export default function AdminLayoutsPage() {
     totalItems: totalLayouts,
   } = usePagination(layouts, 10);
 
-  const loadLayouts = async () => {
+  const loadLayouts = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
-      const r = await fetch(`${API}/api/admin/layouts`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!r.ok) throw new Error(await r.text());
-      setLayouts(await r.json());
+      const payload = await adminFetchJson<unknown>("/api/admin/layouts", token);
+      setLayouts(collectionOrThrow<SeatLayout>(payload, "seat-layout"));
     } catch (e: unknown) {
-      addToast(e instanceof Error ? e.message : "Failed to load", "error");
+      const message = e instanceof Error ? e.message : "Failed to load seat layouts";
+      setError(message);
+      addToast(message, "error");
     } finally {
       setLoading(false);
     }
-  };
+  }, [addToast, token]);
 
   const loadPreview = async (layout: SeatLayout) => {
-    const r = await fetch(`${API}/api/admin/layouts/${layout.id}/seats`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!r.ok) return;
-    const data = await r.json() as { layout: SeatLayout; seats: SeatLayoutSeat[] };
-    setPreview(data);
+    try {
+      const data = await adminFetchJson<{ layout: SeatLayout; seats: SeatLayoutSeat[] }>(
+        `/api/admin/layouts/${layout.id}/seats`, token,
+      );
+      setPreview({ ...data, seats: collectionOrThrow<SeatLayoutSeat>(data.seats, "seat") });
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : "Failed to load layout seats", "error");
+    }
   };
 
-  useEffect(() => { loadLayouts(); }, []);
+  useEffect(() => { void loadLayouts(); }, [loadLayouts]);
 
   const handleCreateLayout = async () => {
     if (!createForm.name.trim()) { addToast("Name required", "error"); return; }
     setCreating(true);
     try {
-      const r = await fetch(`${API}/api/admin/layouts`, {
+      const data = await adminFetchJson<{ id: number }>("/api/admin/layouts", token, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(createForm),
       });
-      if (!r.ok) throw new Error(await r.text());
-      const data = await r.json() as { id: number };
       setNewLayoutId(data.id);
       addToast("Layout template created! Now configure the seats.", "success");
     } catch (e: unknown) {
@@ -172,23 +172,21 @@ export default function AdminLayoutsPage() {
     setAddingSeats(true);
     try {
       if (isEditingMode) {
-        const r = await fetch(`${API}/api/admin/layouts/${layoutId}`, {
+        await adminFetchJson<void>(`/api/admin/layouts/${layoutId}`, token, {
           method: "PUT",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: createForm.name,
             description: createForm.description,
             seats: seats,
           }),
         });
-        if (!r.ok) throw new Error(await r.text());
       } else {
-        const r = await fetch(`${API}/api/admin/layouts/${layoutId}/seats`, {
+        await adminFetchJson<void>(`/api/admin/layouts/${layoutId}/seats`, token, {
           method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ seats }),
         });
-        if (!r.ok) throw new Error(await r.text());
       }
       
       setSaveSuccess(true);
@@ -210,11 +208,16 @@ export default function AdminLayoutsPage() {
   };
 
   const handleEditClick = async (layout: SeatLayout) => {
-    const r = await fetch(`${API}/api/admin/layouts/${layout.id}/seats`, {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!r.ok) { addToast("Failed to fetch seats for editing", "error"); return; }
-    const data = await r.json() as { layout: SeatLayout; seats: SeatLayoutSeat[] };
+    let data: { layout: SeatLayout; seats: SeatLayoutSeat[] };
+    try {
+      data = await adminFetchJson<{ layout: SeatLayout; seats: SeatLayoutSeat[] }>(
+        `/api/admin/layouts/${layout.id}/seats`, token,
+      );
+      data.seats = collectionOrThrow<SeatLayoutSeat>(data.seats, "seat");
+    } catch (e: unknown) {
+      addToast(e instanceof Error ? e.message : "Failed to fetch seats for editing", "error");
+      return;
+    }
     
     const initSeats: SeatInput[] = data.seats.map(s => ({
       row_letter: s.row_letter,
@@ -240,13 +243,11 @@ export default function AdminLayoutsPage() {
   const handleDelete = async (id: number) => {
     if (!confirm("Are you sure you want to delete this seat layout? Active schedules will retain their seats but lose reference to this template.")) return;
     try {
-      const r = await fetch(`${API}/api/admin/layouts/${id}`, {
+      await adminFetchJson<void>(`/api/admin/layouts/${id}`, token, {
         method: "DELETE",
-        headers: { Authorization: `Bearer ${token}` }
       });
-      if (!r.ok) throw new Error(await r.text());
       addToast("Layout deleted successfully", "success");
-      loadLayouts();
+      void loadLayouts();
     } catch (e: unknown) {
       addToast(e instanceof Error ? e.message : "Failed to delete layout", "error");
     }
@@ -273,6 +274,13 @@ export default function AdminLayoutsPage() {
         {loading ? (
           <div style={{ padding: "48px 24px", textAlign: "center" }}>
             <div className="admin-spinner" style={{ margin: "0 auto" }} />
+          </div>
+        ) : error ? (
+          <div style={{ padding: "32px 24px", textAlign: "center", color: "var(--danger)", fontSize: 13 }}>
+            ⚠ {error}
+            <button className="btn btn-ghost btn-sm" style={{ marginLeft: 10 }} onClick={() => void loadLayouts()}>
+              Retry
+            </button>
           </div>
         ) : (
           <div className="admin-table-wrap">

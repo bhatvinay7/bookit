@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { Show, SeatLayout, ScheduleV2, ShowType, LayoutSeatClass } from "@/types";
 import { Pagination, usePagination } from "../components/Pagination";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+import { adminFetchJson, collectionOrThrow } from "@/lib/adminApi";
 
 const TYPE_ICONS: Record<string, string> = {
   Movie: "🎬", Concert: "🎵", Event: "🎪", GameEvent: "🏟️",
@@ -96,15 +95,23 @@ function CreateScheduleWizard({
   } = usePagination(shows, 10);
 
   useEffect(() => {
-    fetch(`${API}/api/admin/shows`, { headers: { Authorization: `Bearer ${token}` } })
-      .then(r => r.json()).then(setShows).catch(() => {});
+    let active = true;
+    void adminFetchJson<unknown>("/api/admin/shows", token)
+      .then((payload) => collectionOrThrow<Show & { _id?: { $oid: string } }>(payload, "show"))
+      .then((items) => items.map((show) => ({ ...show, id: show.id ?? show._id?.$oid ?? "" })))
+      .then((items) => { if (active) setShows(items); })
+      .catch((e: unknown) => { if (active) setError(e instanceof Error ? e.message : "Failed to load shows"); });
+    return () => { active = false; };
   }, [token]);
 
   useEffect(() => {
     if (!selectedShow) return;
-    fetch(`${API}/api/admin/layouts?show_type=${selectedShow.show_type}`, {
-      headers: { Authorization: `Bearer ${token}` }
-    }).then(r => r.json()).then(setLayouts).catch(() => {});
+    let active = true;
+    void adminFetchJson<unknown>(`/api/admin/layouts?show_type=${selectedShow.show_type}`, token)
+      .then((payload) => collectionOrThrow<SeatLayout>(payload, "seat-layout"))
+      .then((items) => { if (active) setLayouts(items); })
+      .catch((e: unknown) => { if (active) setError(e instanceof Error ? e.message : "Failed to load seat layouts"); });
+    return () => { active = false; };
   }, [selectedShow, token]);
 
   const handleCreate = async () => {
@@ -113,9 +120,9 @@ function CreateScheduleWizard({
     }
     setSaving(true); setError("");
     try {
-      const r = await fetch(`${API}/api/admin/schedules`, {
+      await adminFetchJson<ScheduleV2>("/api/admin/schedules", token, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           mongo_show_id:   selectedShow.id,
           show_type:       selectedShow.show_type,
@@ -132,7 +139,6 @@ function CreateScheduleWizard({
           venue_state:     venueState || undefined,
         }),
       });
-      if (!r.ok) throw new Error(await r.text());
       onDone();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to create schedule");
@@ -453,30 +459,30 @@ export default function AdminSchedulesV2Page() {
     totalItems: totalSchedules,
   } = usePagination(schedules, 10);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
-      const r = await fetch(`${API}/api/admin/schedules`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!r.ok) throw new Error(await r.text());
-      setSchedules(await r.json());
+      const payload = await adminFetchJson<unknown>("/api/admin/schedules", token);
+      setSchedules(collectionOrThrow<ScheduleV2>(payload, "schedule"));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load");
     } finally {
       setLoading(false);
     }
-  };
+  }, [token]);
 
   const handleCancel = async (id: number) => {
     if (!confirm("Cancel this schedule? Existing bookings will NOT be auto-refunded.")) return;
-    await fetch(`${API}/api/admin/schedules/${id}`, {
-      method: "DELETE", headers: { Authorization: `Bearer ${token}` }
-    });
-    await load();
+    try {
+      await adminFetchJson<void>(`/api/admin/schedules/${id}`, token, { method: "DELETE" });
+      await load();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to cancel schedule");
+    }
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { void load(); }, [load]);
 
   return (
     <>
@@ -524,7 +530,7 @@ export default function AdminSchedulesV2Page() {
                 )}
                 {paginatedSchedules.map(s => (
                   <tr key={s.id} style={{ opacity: s.deleted_at ? 0.4 : 1 }}>
-                    <td style={{ fontWeight: 500 }}>{s.show?.title || s.mongo_show_id}</td>
+                    <td style={{ fontWeight: 500 }}>{s.show_title || s.show?.title || s.mongo_show_id}</td>
                     <td>
                       <span className="badge badge-indigo" style={{ fontSize: 11 }}>
                         {TYPE_ICONS[s.show_type] ?? "🎭"} {s.show_type}
@@ -672,9 +678,9 @@ function UpdateScheduleModal({
     setSaving(true);
     setError("");
     try {
-      const r = await fetch(`${API}/api/admin/schedules/${schedule.id}`, {
+      await adminFetchJson<ScheduleV2>(`/api/admin/schedules/${schedule.id}`, token, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           date: date || undefined,
           slot,
@@ -685,7 +691,6 @@ function UpdateScheduleModal({
           venue_city: venueCity.trim(),
         }),
       });
-      if (!r.ok) throw new Error(await r.text());
       onDone();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to update schedule");
@@ -825,12 +830,11 @@ function ExtraSeatsModal({
         seat_class:  r.seat_class,
         price:       r.price,
       }));
-      const res = await fetch(`${API}/api/admin/schedules/${scheduleId}/seats`, {
+      await adminFetchJson<void>(`/api/admin/schedules/${scheduleId}/seats`, token, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ seats: payload }),
       });
-      if (!res.ok) throw new Error(await res.text());
       onClose();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to add seats");

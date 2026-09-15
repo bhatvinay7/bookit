@@ -1,10 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useParams, useRouter } from "next/navigation";
 import type { ScheduleV2, ScheduleSeat } from "@/types";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+import { adminFetchJson, collectionOrThrow } from "@/lib/adminApi";
 
 export default function ScheduleSeatsEditorPage() {
   const { id } = useParams() as { id: string };
@@ -21,27 +20,22 @@ export default function ScheduleSeatsEditorPage() {
   const [bulkPrice, setBulkPrice] = useState("");
   const [saving, setSaving] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
+    setError("");
     try {
-      // Need a way to fetch a single schedule. If not available, we fetch all and filter, or just don't show schedule metadata
-      // For now we'll just fetch seats.
-      const resSeats = await fetch(`${API}/api/admin/schedules/${id}/seats`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!resSeats.ok) throw new Error("Failed to load seats");
-      const seatData = await resSeats.json();
-      setSeats(seatData);
+      const payload = await adminFetchJson<unknown>(`/api/admin/schedules/${id}/seats`, token);
+      setSeats(collectionOrThrow<ScheduleSeat>(payload, "schedule-seat"));
     } catch (err: unknown) {
       setError((err instanceof Error ? err.message : String(err)));
     } finally {
       setLoading(false);
     }
-  };
+  }, [id, token]);
 
   useEffect(() => {
-    load();
-  }, [id]);
+    void load();
+  }, [load]);
 
   // Group seats by Class + Row
   const grouped = seats.reduce((acc, seat) => {
@@ -73,13 +67,11 @@ export default function ScheduleSeatsEditorPage() {
         price: bulkPrice,
       }));
       
-      const res = await fetch(`${API}/api/admin/schedules/${id}/seats`, {
+      await adminFetchJson<void>(`/api/admin/schedules/${id}/seats`, token, {
         method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ seats: payload })
       });
-      
-      if (!res.ok) throw new Error(await res.text());
       
       setBulkPrice("");
       setSelectedSeatIds(new Set());
