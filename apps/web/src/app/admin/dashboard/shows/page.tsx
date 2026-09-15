@@ -1,12 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Show, ShowType } from "@/types";
 import ShowForm from "./components/ShowForm";
 import { useToast } from "../components/ToastProvider";
 import { Pagination, usePagination } from "../components/Pagination";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+import { adminFetchJson, collectionOrThrow } from "@/lib/adminApi";
 
 type FilterType = "all" | ShowType;
 
@@ -20,8 +19,8 @@ export default function AdminShowsPage() {
 
   const { addToast } = useToast();
   const [shows,      setShows]      = useState<Show[]>([]);
-  const [loading,    setLoading]    = useState(false);
-  const [fetched,    setFetched]    = useState(false);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState("");
   const [filter,     setFilter]     = useState<FilterType>("all");
   const [search,     setSearch]     = useState("");
   const [modal,      setModal]      = useState<"create" | "edit" | null>(null);
@@ -35,17 +34,19 @@ export default function AdminShowsPage() {
     totalItems: totalShows,
   } = usePagination(shows, 10);
 
-  const load = async () => {
+  const load = useCallback(async (requestedFilter: FilterType, requestedSearch: string) => {
     setLoading(true);
+    setError("");
     try {
       const params = new URLSearchParams();
-      if (filter !== "all") params.set("show_type", filter);
-      if (search) params.set("search", search);
-      const r = await fetch(`${API}/api/admin/shows?${params}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      if (!r.ok) throw new Error(await r.text());
-      const data: Array<Show & { _id?: { $oid: string } }> = await r.json();
+      if (requestedFilter !== "all") params.set("show_type", requestedFilter);
+      if (requestedSearch.trim()) params.set("search", requestedSearch.trim());
+      const query = params.toString();
+      const payload = await adminFetchJson<unknown>(
+        `/api/admin/shows${query ? `?${query}` : ""}`,
+        token,
+      );
+      const data = collectionOrThrow<Show & { _id?: { $oid: string } }>(payload, "shows");
       
       // Map MongoDB _id to flat id and sort alphabetically
       const mapped = data.map((s) => ({
@@ -54,31 +55,34 @@ export default function AdminShowsPage() {
       })).sort((a, b) => (a.title || "").localeCompare(b.title || ""));
       
       setShows(mapped);
-      setFetched(true);
     } catch (e: unknown) {
-      addToast(e instanceof Error ? e.message : "Failed to load shows", "error");
+      const message = e instanceof Error ? e.message : "Failed to load shows";
+      setError(message);
+      addToast(message, "error");
     } finally {
       setLoading(false);
     }
-  };
+  }, [addToast, token]);
 
-  // Load on first render
-  if (!fetched && !loading) { load(); }
+  // A failed request must not be retried from the render body. Retry only when
+  // the user changes a filter, searches, or presses Refresh.
+  useEffect(() => {
+    void load("all", "");
+  }, [load]);
 
   const handleSave = async (data: Partial<Show>) => {
     setSaving(true);
     try {
-      const url  = selected ? `${API}/api/admin/shows/${selected.id}` : `${API}/api/admin/shows`;
+      const url  = selected ? `/api/admin/shows/${selected.id}` : "/api/admin/shows";
       const meth = selected ? "PUT" : "POST";
-      const r = await fetch(url, {
+      await adminFetchJson<Show>(url, token, {
         method: meth,
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(data),
       });
-      if (!r.ok) throw new Error(await r.text());
       addToast(`Show ${selected ? "updated" : "created"} successfully!`, "success");
       setModal(null); setSelected(null);
-      setFetched(false); // re-fetch
+      void load(filter, search);
     } catch (e: unknown) {
       addToast(e instanceof Error ? e.message : "Save failed", "error");
     } finally {
@@ -89,12 +93,11 @@ export default function AdminShowsPage() {
   const handleDelete = async (id: string) => {
     if (!confirm("Soft-delete this show?")) return;
     try {
-      const r = await fetch(`${API}/api/admin/shows/${id}`, {
-        method: "DELETE", headers: { Authorization: `Bearer ${token}` }
+      await adminFetchJson<void>(`/api/admin/shows/${id}`, token, {
+        method: "DELETE",
       });
-      if (!r.ok) throw new Error(await r.text());
       addToast("Show deleted successfully", "success");
-      setFetched(false);
+      void load(filter, search);
     } catch (e: unknown) {
       addToast(e instanceof Error ? e.message : "Delete failed", "error");
     }
@@ -120,7 +123,7 @@ export default function AdminShowsPage() {
         <input className="admin-input" style={{ maxWidth: 260 }}
           placeholder="Search by title or tag…"
           value={search} onChange={e => setSearch(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && (setFetched(false), load())}
+          onKeyDown={e => e.key === "Enter" && void load(filter, search)}
         />
         <div style={{ display: "flex", gap: 4, background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: 4 }}>
           {filters.map(f => (
@@ -131,13 +134,13 @@ export default function AdminShowsPage() {
                 background: filter === f ? "var(--accent)" : "transparent",
                 color: filter === f ? "white" : "var(--text-secondary)",
               }}
-              onClick={() => { setFilter(f); setFetched(false); }}
+              onClick={() => { setFilter(f); void load(f, search); }}
             >
               {f === "all" ? "All" : `${TYPE_ICONS[f]} ${f}`}
             </button>
           ))}
         </div>
-        <button className="btn btn-ghost btn-sm" onClick={() => { setFetched(false); load(); }}>↻ Refresh</button>
+        <button className="btn btn-ghost btn-sm" onClick={() => void load(filter, search)}>↻ Refresh</button>
       </div>
 
       {/* ── Content ───────────────────────────────────────────────────────── */}
@@ -151,6 +154,13 @@ export default function AdminShowsPage() {
           <div style={{ padding: "48px 24px", textAlign: "center", color: "var(--text-muted)" }}>
             <div className="admin-spinner" style={{ margin: "0 auto 12px" }} />
             Loading…
+          </div>
+        ) : error ? (
+          <div style={{ padding: "32px 24px", textAlign: "center", color: "var(--danger)", fontSize: 13 }}>
+            ⚠ {error}
+            <button className="btn btn-ghost btn-sm" style={{ marginLeft: 10 }} onClick={() => void load(filter, search)}>
+              Retry
+            </button>
           </div>
         ) : (
           <div className="admin-table-wrap">

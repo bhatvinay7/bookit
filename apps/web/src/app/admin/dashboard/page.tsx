@@ -5,8 +5,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Pagination, usePagination } from "./components/Pagination";
-
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+import { adminFetchJson, collectionOrThrow } from "@/lib/adminApi";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -118,26 +117,17 @@ export default function AdminDashboard() {
     }
     setToken(t);
 
-    const headers = { Authorization: `Bearer ${t}` };
-
     Promise.all([
-      fetch(`${API}/api/admin/stats`, { headers }).then<AdminStats>((r) => {
-        if (!r.ok) throw new Error("Failed to load stats");
-        return r.json();
-      }),
-      fetch(`${API}/api/admin/schedules`, { headers }).then<AdminShowtime[]>(
-        (r) => {
-          if (!r.ok) throw new Error("Failed to load schedules");
-          return r.json();
-        }
-      ),
+      adminFetchJson<AdminStats>("/api/admin/stats", t),
+      adminFetchJson<unknown>("/api/admin/schedules", t)
+        .then((payload) => collectionOrThrow<AdminShowtime>(payload, "schedule")),
     ])
       .then(([s, st]) => {
         setStats(s);
         setShowtimes(Array.isArray(st) ? st : []);
       })
       .catch((err: unknown) => {
-        const msg = err instanceof Error ? (err instanceof Error ? err.message : String(err)) : "Failed to load data";
+        const msg = err instanceof Error ? err.message : "Failed to load data";
         setError(msg);
       })
       .finally(() => setLoading(false));

@@ -50,6 +50,8 @@ export interface ScheduleV2 {
 
   // Joined from MongoDB (optional, when enriched)
   show?: import('./show').Show;
+  /** Title supplied by the HTTP Server schedule-list response. */
+  show_title?: string;
 }
 
 /** Request body for creating a schedule */

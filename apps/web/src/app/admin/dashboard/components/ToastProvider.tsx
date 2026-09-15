@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback } from "react";
+import React, { createContext, useContext, useState, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 
 type ToastType = "success" | "error" | "info";
@@ -27,14 +27,22 @@ export function useToast() {
 
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const activeToastKeys = useRef(new Set<string>());
 
   const addToast = useCallback((message: string, type: ToastType) => {
+    const key = `${type}:${message}`;
+    // A transient outage can affect multiple panels at once. Keep one clear
+    // notification instead of stacking identical messages over the page.
+    if (activeToastKeys.current.has(key)) return;
+    activeToastKeys.current.add(key);
+
     const id = Date.now();
     setToasts((prev) => [...prev, { id, message, type }]);
 
     // Auto-remove after 4 seconds
     setTimeout(() => {
       setToasts((prev) => prev.filter((t) => t.id !== id));
+      activeToastKeys.current.delete(key);
     }, 4000);
   }, []);
 
