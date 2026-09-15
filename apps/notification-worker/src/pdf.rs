@@ -84,13 +84,19 @@ fn build_r2_client() -> anyhow::Result<S3Client> {
     if account_id.len() != 32 || !account_id.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         anyhow::bail!("CLOUDFLARE_R2_ACCOUNT_ID must contain 32 hexadecimal characters");
     }
+    let access_key_id = required("CLOUDFLARE_R2_ACCESS_KEY_ID")?;
+    if access_key_id.len() != 32 || access_key_id.bytes().any(|byte| byte.is_ascii_whitespace()) {
+        anyhow::bail!(
+            "CLOUDFLARE_R2_ACCESS_KEY_ID must contain exactly 32 non-whitespace characters"
+        );
+    }
     let endpoint = resolve_endpoint(
         &account_id,
         std::env::var("CLOUDFLARE_R2_ENDPOINT").ok().as_deref(),
     )?;
     let config = aws_sdk_s3::Config::builder()
         .credentials_provider(Credentials::new(
-            required("CLOUDFLARE_R2_ACCESS_KEY_ID")?,
+            access_key_id,
             required("CLOUDFLARE_R2_SECRET_ACCESS_KEY")?,
             None,
             None,

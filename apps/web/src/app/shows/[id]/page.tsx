@@ -5,13 +5,87 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import { motion } from "framer-motion";
 import { UserNav } from "@/components/UserNav";
-import { Clock, MapPin, ChevronRight, ArrowLeft } from "lucide-react";
+import { Clock, MapPin, ChevronRight, ArrowLeft, X } from "lucide-react";
 import type { ScheduleV2 } from "@/types/schedule";
 
 import type { Show } from "@/types";
 import { ScheduleCalendar, type ScheduleSlot } from "@/components/schedules/ScheduleCalendar";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+
+function ScheduleCards({ schedules }: { schedules: ScheduleV2[] }) {
+  if (schedules.length === 0) {
+    return (
+      <div className="rounded-2xl border border-[var(--border)] bg-[var(--bg-subtle)] p-8 text-center text-[var(--text-secondary)]">
+        No schedules match these filters.
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid gap-3 xl:grid-cols-2">
+      {schedules.map((schedule) => {
+        const date = new Date(schedule.start_time);
+        const isOpen = schedule.booking_open === true;
+        const opensAt = new Date(schedule.booking_open_at);
+
+        return (
+          <motion.article
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            key={schedule.id}
+            className="flex min-w-0 flex-col gap-4 rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-4 shadow-sm transition-all hover:border-[var(--accent)]/50 hover:shadow-[var(--card-shadow-hover)] sm:flex-row sm:items-center sm:p-5"
+          >
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span className="font-bold text-[var(--text-primary)] sm:text-lg">
+                  {date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" })}
+                </span>
+                <span className="font-bold text-[var(--accent)] sm:text-lg">
+                  {date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" })}
+                </span>
+              </div>
+              <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--text-secondary)] sm:text-sm">
+                <span className="flex min-w-0 items-center gap-1">
+                  <MapPin className="h-4 w-4 shrink-0" />
+                  <span className="truncate">{schedule.venue_name || "Main Venue"}</span>
+                </span>
+                <span className="flex items-center gap-1">
+                  <Clock className="h-4 w-4" />
+                  {schedule.show_type}
+                </span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between gap-4 border-t border-[var(--divider)] pt-4 sm:w-auto sm:border-0 sm:pt-0">
+              <div className="text-left sm:text-right">
+                <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)]">Seats</div>
+                <div className="font-bold text-[var(--text-primary)]">
+                  <span className="text-[var(--accent)]">{schedule.available_seats}</span> / {schedule.total_seats}
+                </div>
+              </div>
+              {isOpen ? (
+                <Link
+                  href={`/schedules/${schedule.id}`}
+                  className="flex min-h-11 shrink-0 items-center gap-2 rounded-xl bg-gradient-to-r from-[var(--accent)] to-yellow-500 px-4 py-2.5 text-sm font-bold text-[#12111a] transition-all hover:-translate-y-0.5 hover:shadow-[0_0_15px_rgba(224,150,0,0.4)]"
+                >
+                  Select Seats <ChevronRight className="h-4 w-4" />
+                </Link>
+              ) : (
+                <div className="max-w-40 rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-3 py-2 text-right text-xs font-semibold text-[var(--text-muted)]">
+                  <span className="block">Reservations not open</span>
+                  <span className="block font-normal">
+                    Opens {opensAt.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  </span>
+                </div>
+              )}
+            </div>
+          </motion.article>
+        );
+      })}
+    </div>
+  );
+}
 
 export default function ShowDetailsPage() {
   const params = useParams();
@@ -21,6 +95,7 @@ export default function ShowDetailsPage() {
   const [schedules, setSchedules] = useState<ScheduleV2[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [schedulePickerOpen, setSchedulePickerOpen] = useState(false);
 
   const [dateFilter, setDateFilter] = useState("");
   const [slotFilter, setSlotFilter] = useState<ScheduleSlot>("All");
@@ -47,7 +122,7 @@ export default function ShowDetailsPage() {
         if (schedulesRes.ok) {
           const schedData = await schedulesRes.json();
           setSchedules(schedData);
-          if (schedData.length > 0) setDateFilter(schedData[0].date);
+          setSchedulePickerOpen(schedData.length > 0);
         }
       } catch (err: unknown) {
         setError((err instanceof Error ? err.message : String(err)));
@@ -102,7 +177,7 @@ export default function ShowDetailsPage() {
         </div>
       </nav>
 
-      <main className="mx-auto grid w-full max-w-7xl grid-cols-1 items-start gap-8 px-4 py-5 sm:px-6 sm:py-8 lg:grid-cols-[minmax(0,3fr)_minmax(360px,2fr)] lg:gap-10 lg:px-8 lg:py-12 xl:gap-12">
+      <main className="mx-auto w-full max-w-7xl px-4 py-5 sm:px-6 sm:py-8 lg:px-8 lg:py-12">
         
         {/* Wide artwork with show details directly below it. */}
         <section className="w-full min-w-0 flex flex-col gap-6">
@@ -223,112 +298,80 @@ export default function ShowDetailsPage() {
           </div>
         </section>
 
-        {/* Schedules */}
-        <section className="w-full min-w-0 lg:sticky lg:top-24">
-          <div className="mb-5">
+        <section className="mt-10 rounded-3xl border border-[var(--border)] bg-[var(--card-bg)] p-5 shadow-[var(--card-shadow)] sm:mt-12 sm:flex sm:items-center sm:justify-between sm:gap-6 sm:p-7">
+          <div>
             <p className="mb-1 text-[10px] font-black uppercase tracking-[0.18em] text-[var(--accent)] sm:text-xs">Choose a session</p>
-            <h2 className="font-display text-2xl font-black text-[var(--text-primary)] sm:text-3xl">Available Showtimes</h2>
+            <h2 className="font-display text-2xl font-black text-[var(--text-primary)]">Available Showtimes</h2>
+            <p className="mt-2 text-sm text-[var(--text-secondary)]">
+              {schedules.length ? `${schedules.length} schedules are available for this show.` : "No upcoming schedules are available for this show."}
+            </p>
           </div>
-          
-          {schedules.length > 0 && (
-            <>
-              <ScheduleCalendar
-                schedules={schedules}
-                selectedDate={dateFilter}
-                selectedSlot={slotFilter}
-                onDateChange={setDateFilter}
-                onSlotChange={setSlotFilter}
-              />
-              <div className="mb-6 flex flex-wrap gap-4 sm:mb-8">
-              <select 
-                className="min-h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--card-bg)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)] transition-colors focus:border-[var(--accent)] focus:outline-none sm:w-auto"
-                value={venueFilter}
-                onChange={(e) => setVenueFilter(e.target.value)}
-              >
-                <option value="">All Venues</option>
-                {Array.from(new Set(schedules.map(s => s.venue_name || "Main Venue"))).map(v => (
-                  <option key={v} value={v}>{v}</option>
-                ))}
-              </select>
-              </div>
-            </>
-          )}
-
-          {filteredSchedules.length === 0 ? (
-            <div className="p-8 bg-[var(--card-bg)] rounded-2xl border border-[var(--border)] text-center text-[var(--text-secondary)]">
-              No upcoming schedules available for this show.
-            </div>
-          ) : (
-            <div className="flex flex-col gap-3 sm:gap-4">
-              {filteredSchedules.map(schedule => {
-                const date = new Date(schedule.start_time);
-                // The API's lifecycle flag is authoritative. A timestamp alone
-                // must not enable navigation while the schedule is still
-                // Scheduled and the booking service has not opened it.
-                const isOpen = schedule.booking_open === true;
-                const opensAt = new Date(schedule.booking_open_at);
-                
-                return (
-                  <motion.div 
-                    initial={{ opacity: 0, x: 20 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    key={schedule.id}
-                    className="flex flex-col items-stretch gap-4 rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-4 shadow-sm transition-all hover:border-[var(--accent)]/50 hover:shadow-[var(--card-shadow-hover)] sm:flex-row sm:items-center sm:gap-6 sm:p-5"
-                  >
-                    <div className="flex-1 w-full sm:w-auto flex flex-col gap-2">
-                      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-                        <span className="font-bold text-[var(--text-primary)] sm:text-lg">
-                          {date.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })}
-                        </span>
-                        <span className="font-bold text-[var(--accent)] sm:text-lg">
-                          {date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-[var(--text-secondary)] sm:text-sm">
-                        <span className="flex min-w-0 items-center gap-1">
-                          <MapPin className="w-4 h-4" />
-                          <span className="truncate">{schedule.venue_name || "Main Venue"}</span>
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-4 h-4" />
-                          {schedule.show_type}
-                        </span>
-                      </div>
-                    </div>
-                    
-                    <div className="flex w-full items-center justify-between gap-4 border-t border-[var(--divider)] pt-4 sm:w-auto sm:justify-end sm:gap-6 sm:border-0 sm:pt-0">
-                      <div className="text-left sm:text-right">
-                        <div className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[var(--text-muted)] sm:text-xs">Seats</div>
-                        <div className="font-bold text-[var(--text-primary)]">
-                          <span className="text-[var(--accent)]">{schedule.available_seats}</span> / {schedule.total_seats}
-                        </div>
-                      </div>
-                      
-                      {isOpen ? (
-                        <Link
-                          href={`/schedules/${schedule.id}`}
-                          className="flex min-h-11 items-center gap-2 rounded-xl bg-gradient-to-r from-[var(--accent)] to-yellow-500 px-4 py-2.5 text-sm font-bold text-[#12111a] transition-all hover:-translate-y-0.5 hover:shadow-[0_0_15px_rgba(224,150,0,0.4)] sm:px-5"
-                        >
-                          Select Seats
-                          <ChevronRight className="h-4 w-4" />
-                        </Link>
-                      ) : (
-                        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-2 text-right text-xs font-semibold text-[var(--text-muted)] sm:px-5">
-                          <span className="block">Reservations not open</span>
-                          <span className="block font-normal">
-                            Opens {opensAt.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
-                          </span>
-                        </div>
-                      )}
-                    </div>
-                  </motion.div>
-                );
-              })}
-            </div>
-          )}
+          <button
+            type="button"
+            disabled={schedules.length === 0}
+            onClick={() => setSchedulePickerOpen(true)}
+            className="mt-5 inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-[var(--accent)] to-yellow-500 px-5 py-2.5 text-sm font-bold text-[#12111a] transition-all hover:-translate-y-0.5 disabled:cursor-not-allowed disabled:opacity-50 sm:mt-0"
+          >
+            View all schedules <ChevronRight className="h-4 w-4" />
+          </button>
         </section>
 
       </main>
+
+      {schedulePickerOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/75 p-3 backdrop-blur-sm sm:p-6"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Available showtimes"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setSchedulePickerOpen(false); }}
+        >
+          <section className="flex h-[90vh] w-[92vw] max-w-[1500px] flex-col overflow-hidden rounded-3xl border border-[var(--border)] bg-[var(--bg)] shadow-2xl">
+            <header className="flex items-start justify-between gap-4 border-b border-[var(--border)] bg-[var(--card-bg)] px-5 py-5 sm:px-7">
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-[0.18em] text-[var(--accent)]">Choose a session</p>
+                <h2 className="mt-1 font-display text-2xl font-black text-[var(--text-primary)] sm:text-3xl">All available showtimes</h2>
+                <p className="mt-1 text-sm text-[var(--text-secondary)]">{filteredSchedules.length} of {schedules.length} schedules shown</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSchedulePickerOpen(false)}
+                className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] text-[var(--text-primary)] transition-colors hover:bg-[var(--bg-hover)]"
+                aria-label="Close schedules"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </header>
+            <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(300px,0.7fr)_minmax(0,1.8fr)]">
+              <aside className="overflow-y-auto border-b border-[var(--border)] bg-[var(--card-bg)] p-4 sm:p-6 lg:border-b-0 lg:border-r">
+                <ScheduleCalendar
+                  schedules={schedules}
+                  selectedDate={dateFilter}
+                  selectedSlot={slotFilter}
+                  onDateChange={setDateFilter}
+                  onSlotChange={setSlotFilter}
+                />
+                <label className="block text-xs font-bold uppercase tracking-wider text-[var(--text-muted)]">
+                  Venue
+                  <select
+                    className="mt-2 min-h-11 w-full rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-2 text-sm font-semibold text-[var(--text-primary)] focus:border-[var(--accent)] focus:outline-none"
+                    value={venueFilter}
+                    onChange={(event) => setVenueFilter(event.target.value)}
+                  >
+                    <option value="">All venues</option>
+                    {Array.from(new Set(schedules.map((schedule) => schedule.venue_name || "Main Venue"))).map((venue) => (
+                      <option key={venue} value={venue}>{venue}</option>
+                    ))}
+                  </select>
+                </label>
+              </aside>
+              <div className="min-h-0 overflow-y-auto p-4 sm:p-6 lg:p-7">
+                <ScheduleCards schedules={filteredSchedules} />
+              </div>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
