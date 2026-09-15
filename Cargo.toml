@@ -14,6 +14,7 @@ members = [
     "packages/telemetry",
     "apps/cdc-worker",
     "apps/outbox-server",
+    "apps/load-test-runner",
     "packages/proto",
 ]
 resolver = "2"

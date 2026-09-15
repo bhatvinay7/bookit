@@ -1159,6 +1159,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bookit-load-test-runner"
+version = "0.1.0"
+dependencies = [
+ "prost 0.13.5",
+ "protoc-bin-vendored",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tonic 0.12.3",
+ "tonic-build",
+]
+
+[[package]]
 name = "bookit-mongo"
 version = "0.1.0"
 dependencies = [

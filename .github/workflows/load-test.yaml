@@ -14,7 +14,7 @@ on:
         required: true
         type: choice
         default: peak-spike
-        options: [peak-spike, race-lock, single-seat-lock-ramp, endurance-soak]
+        options: [peak-spike, race-lock, single-seat-lock-ramp, rust-lock-job, endurance-soak]
       duration:
         description: "Sustained hold duration per stage (5m through 4h); HPA cannot be evaluated from a short burst"
         required: true
@@ -53,6 +53,11 @@ on:
         required: true
         type: string
         default: "500"
+      rust_runner_threads:
+        description: "Tokio worker threads for the in-cluster Rust lock Job (1-32)"
+        required: true
+        type: string
+        default: "4"
       ws_observers:
         description: "Development WebSocket observers subscribed to the tested show (1-1000)"
         required: true
@@ -74,6 +79,7 @@ concurrency:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   load-test:
@@ -96,6 +102,7 @@ jobs:
       TEST_RESPONSE_BODY_CONTAINS: ${{ inputs.response_body_contains }}
       GRPC_PAYLOAD: ${{ inputs.grpc_payload }}
       LOCK_RAMP_CONCURRENCY: ${{ inputs.lock_ramp_concurrency }}
+      RUST_RUNNER_THREADS: ${{ inputs.rust_runner_threads }}
       WS_OBSERVERS: ${{ inputs.ws_observers }}
       RUN_REDIS_BENCHMARK: ${{ inputs.run_redis_benchmark }}
       CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
@@ -145,13 +152,19 @@ jobs:
               exit 1
             fi
           fi
-          if [ "$TEST_CASE" = race-lock ] || [ "$TEST_CASE" = single-seat-lock-ramp ]; then
+          if [ "$TEST_CASE" = race-lock ] || [ "$TEST_CASE" = single-seat-lock-ramp ] || [ "$TEST_CASE" = rust-lock-job ]; then
             if [ "$TARGET_ENVIRONMENT" = production ]; then
               echo "Lock tests are restricted to deployment1 because they create real seat locks."
               exit 1
             fi
             if [ -z "$GRPC_SERVER_URL" ] || [ -z "$GRPC_PAYLOAD" ]; then
               echo "Lock tests require the existing GRPC_SERVER_URL secret and an isolated development grpc_payload."
+              exit 1
+            fi
+          fi
+          if [ "$TEST_CASE" = rust-lock-job ]; then
+            if ! [[ "$RUST_RUNNER_THREADS" =~ ^[1-9][0-9]*$ ]] || [ "$RUST_RUNNER_THREADS" -gt 32 ]; then
+              echo "rust_runner_threads must be between 1 and 32."
               exit 1
             fi
           fi
@@ -177,6 +190,29 @@ jobs:
           TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
 
       - uses: azure/setup-kubectl@v4
+
+      - name: Set up Docker Buildx for Rust lock Job
+        if: ${{ inputs.test_case == 'rust-lock-job' }}
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry for Rust lock Job
+        if: ${{ inputs.test_case == 'rust-lock-job' }}
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build the immutable Rust lock Job image
+        if: ${{ inputs.test_case == 'rust-lock-job' }}
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: apps/load-test-runner/Dockerfile
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/bookit-load-test-runner:commit-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
       - name: Configure Kubernetes access
         run: |
@@ -284,6 +320,41 @@ jobs:
           trap 'kill "$observer_pid" "$pushgateway_pid" 2>/dev/null || true; wait "$observer_pid" 2>/dev/null || true; wait "$pushgateway_pid" 2>/dev/null || true' EXIT
           ./load-tests/run-single-seat-lock-ramp.sh
 
+      - name: Run Rust multithreaded lock Job in Kubernetes
+        if: ${{ inputs.test_case == 'rust-lock-job' }}
+        run: |
+          mkdir -p load-test-results
+          case "$TEST_DURATION" in
+            *m) duration_seconds=$(( ${TEST_DURATION%m} * 60 )) ;;
+            *h) duration_seconds=$(( ${TEST_DURATION%h} * 3600 )) ;;
+            *) echo "unsupported validated duration: $TEST_DURATION"; exit 1 ;;
+          esac
+          job_name="bookit-rust-lock-${{ github.run_id }}"
+          runner_image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/bookit-load-test-runner:commit-${GITHUB_SHA}"
+          printf '%s' "$GRPC_PAYLOAD" > load-test-results/rust-lock-payload.json
+          kubectl -n bookit create configmap manual-load-test-config \
+            --from-literal=LOAD_TEST_GRPC_TARGET="$GRPC_SERVER_URL" \
+            --from-file=LOAD_TEST_GRPC_PAYLOAD=load-test-results/rust-lock-payload.json \
+            --from-literal=LOAD_TEST_RPS="$TEST_TARGET_RPS" \
+            --from-literal=LOAD_TEST_DURATION_SECONDS="$duration_seconds" \
+            --from-literal=LOAD_TEST_CONCURRENCY="$LOCK_RAMP_CONCURRENCY" \
+            --from-literal=LOAD_TEST_THREADS="$RUST_RUNNER_THREADS" \
+            --from-literal=LOAD_TEST_RUN_ID="${{ github.run_id }}" \
+            --from-literal=LOAD_TEST_PUSHGATEWAY_URL="http://load-test-pushgateway.monitoring.svc.cluster.local:9091" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n bookit get cronjob/bookit-rust-lock-load >/dev/null
+          kubectl -n bookit create job "$job_name" --from=cronjob/bookit-rust-lock-load --dry-run=client -o yaml \
+            | sed "s|image: .*bookit-load-test-runner:.*|image: ${runner_image}|" \
+            | kubectl apply -f -
+          set +e
+          kubectl -n bookit wait --for=condition=complete "job/${job_name}" --timeout="$((duration_seconds + 600))s"
+          job_status=$?
+          set -e
+          kubectl -n bookit logs "job/${job_name}" --all-containers=true > load-test-results/rust-lock-job.log 2>&1 || true
+          kubectl -n bookit get "job/${job_name}" -o yaml > load-test-results/rust-lock-job.yaml || true
+          kubectl -n bookit get pods -l job-name="$job_name" -o yaml > load-test-results/rust-lock-pod.yaml || true
+          exit "$job_status"
+
       - name: Run in-cluster Redis benchmark
         if: ${{ inputs.run_redis_benchmark }}
         run: |
@@ -314,6 +385,10 @@ jobs:
           if [ -f load-test-results/cluster-evidence/collector.pid ]; then
             kill "$(cat load-test-results/cluster-evidence/collector.pid)" 2>/dev/null || true
           fi
+
+      - name: Remove disposable Rust lock Job configuration
+        if: ${{ always() && inputs.test_case == 'rust-lock-job' }}
+        run: kubectl -n bookit delete configmap manual-load-test-config --ignore-not-found
 
       - name: Upload load-test reports
         if: always()
