@@ -6,6 +6,7 @@ use axum::{
 };
 use bigdecimal::BigDecimal;
 use chrono::Utc;
+use diesel::dsl::count_star;
 use diesel::prelude::*;
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
@@ -144,16 +145,52 @@ pub async fn list_schedules(
     State(state): State<Arc<AppState>>,
     Query(_q): Query<ListSchedulesQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let mut conn = state
-        .db_pool
-        .get()
-        .map_err(|e| AppError::internal(e.to_string()))?;
+    // Diesel is synchronous. Keep the complete PostgreSQL read away from the
+    // async request workers, and aggregate seats in two grouped queries rather
+    // than doing two queries for every schedule (the former N+1 timeout path).
+    let db_pool = state.db_pool.clone();
+    let (rows, total_seats_by_schedule, available_seats_by_schedule) =
+        tokio::task::spawn_blocking(move || -> Result<_, AppError> {
+            let mut conn = db_pool
+                .get()
+                .map_err(|e| AppError::internal(e.to_string()))?;
+            let rows: Vec<Schedule> = schedules::table
+                .filter(schedules::deleted_at.is_null())
+                .order(schedules::start_time.asc())
+                .load(&mut conn)
+                .map_err(|e| AppError::internal(e.to_string()))?;
+            let schedule_ids: Vec<i32> = rows.iter().map(|schedule| schedule.id).collect();
 
-    let rows: Vec<Schedule> = schedules::table
-        .filter(schedules::deleted_at.is_null())
-        .order(schedules::start_time.asc())
-        .load(&mut conn)
-        .map_err(|e| AppError::internal(e.to_string()))?;
+            if schedule_ids.is_empty() {
+                return Ok((
+                    rows,
+                    std::collections::HashMap::new(),
+                    std::collections::HashMap::new(),
+                ));
+            }
+
+            let total_seats_by_schedule = schedule_seats::table
+                .filter(schedule_seats::schedule_id.eq_any(&schedule_ids))
+                .group_by(schedule_seats::schedule_id)
+                .select((schedule_seats::schedule_id, count_star()))
+                .load::<(i32, i64)>(&mut conn)
+                .map_err(|e| AppError::internal(e.to_string()))?
+                .into_iter()
+                .collect::<std::collections::HashMap<_, _>>();
+            let available_seats_by_schedule = schedule_seats::table
+                .filter(schedule_seats::schedule_id.eq_any(&schedule_ids))
+                .filter(schedule_seats::status.eq(bookit_db::models::SeatStatus::Available))
+                .group_by(schedule_seats::schedule_id)
+                .select((schedule_seats::schedule_id, count_star()))
+                .load::<(i32, i64)>(&mut conn)
+                .map_err(|e| AppError::internal(e.to_string()))?
+                .into_iter()
+                .collect::<std::collections::HashMap<_, _>>();
+
+            Ok((rows, total_seats_by_schedule, available_seats_by_schedule))
+        })
+        .await
+        .map_err(|e| AppError::internal(format!("Schedule query task failed: {e}")))??;
 
     let mut mongo_show_ids = vec![];
     for s in &rows {
@@ -184,18 +221,8 @@ pub async fn list_schedules(
     let enriched: Vec<serde_json::Value> = rows
         .iter()
         .map(|s| {
-            let total: i64 = schedule_seats::table
-                .filter(schedule_seats::schedule_id.eq(s.id))
-                .count()
-                .get_result(&mut conn)
-                .unwrap_or(0);
-
-            let available: i64 = schedule_seats::table
-                .filter(schedule_seats::schedule_id.eq(s.id))
-                .filter(schedule_seats::status.eq(bookit_db::models::SeatStatus::Available))
-                .count()
-                .get_result(&mut conn)
-                .unwrap_or(0);
+            let total = total_seats_by_schedule.get(&s.id).copied().unwrap_or(0);
+            let available = available_seats_by_schedule.get(&s.id).copied().unwrap_or(0);
 
             let now = Utc::now();
             let seconds_until_booking_open = (s.booking_open_at - now).num_seconds();

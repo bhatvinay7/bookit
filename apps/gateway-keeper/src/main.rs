@@ -128,8 +128,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .expect("gateway keeper gRPC server failed");
     });
 
+    // Keep this above the HTTP-server database-pool checkout timeout. Admin
+    // list endpoints should normally finish much faster, but a brief database
+    // wait must return its own controlled error rather than look like a
+    // gateway transport outage and open the circuit.
+    let http_server_timeout_secs = std::env::var("HTTP_SERVER_TIMEOUT_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .unwrap_or(20);
     let http_client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(15))
+        .timeout(std::time::Duration::from_secs(http_server_timeout_secs))
         .build()?;
     let circuit_breaker = Arc::new(circuit_breaker::RedisCircuitBreaker::new(
         redis_pool.clone(),
