@@ -3716,6 +3716,7 @@ name = "notification-worker"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "aws-sdk-s3",
  "bigdecimal",
  "bookit-db",
  "bookit-telemetry",
@@ -3726,6 +3727,7 @@ dependencies = [
  "handlebars",
  "lapin",
  "lettre",
+ "printpdf",
  "reqwest 0.12.28",
  "rmq-conn",
  "rustls 0.23.43",

@@ -1,6 +1,7 @@
 mod consumer;
 mod db;
 mod email;
+mod pdf;
 
 use bookit_db::db::create_db_pool;
 use lapin::{

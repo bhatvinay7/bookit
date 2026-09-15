@@ -24,6 +24,7 @@ use crate::{
         BookingEmailData, CancellationEmailData, send_booking_confirmation,
         send_cancellation_confirmation,
     },
+    pdf::{TicketPdfRequest, generate_and_upload_ticket_pdf},
 };
 
 fn parse_seat_ids(payload: &serde_json::Value) -> Vec<i32> {
@@ -175,24 +176,6 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                             }
                         };
 
-                        let pdf_req_body = json!({
-                            "order_id": order_uuid.to_string(),
-                            "user_id": user_id_val,
-                            "show_name": "BookIt Show Ticket",
-                            "show_time": show_time,
-                            "place": "Main Theater",
-                            "venue": venue_name.clone(),
-                            "price": &amount_str,
-                            "seat_numbers": seat_labels.clone()
-                        });
-
-                        let http_server_url = env::var("HTTP_SERVER_URL")
-                            .unwrap_or_else(|_| "http://127.0.0.1:8082".to_string());
-                        let pdf_endpoint = format!(
-                            "{}/api/internal/tickets/generate-pdf",
-                            http_server_url.trim_end_matches('/')
-                        );
-
                         let existing_pdf = existing_ticket
                             .as_ref()
                             .map(|ticket| ticket.pdf_url.as_str())
@@ -200,7 +183,16 @@ pub async fn process_messages(mut consumer: Consumer, db_pool: DbPool) {
                         let pdf_url = if let Some(url) = existing_pdf {
                             url.to_string()
                         } else {
-                            match generate_pdf(&pdf_endpoint, &pdf_req_body).await {
+                            let pdf_request = TicketPdfRequest {
+                                order_id: order_uuid.to_string(),
+                                show_name: "BookIt Show Ticket".to_string(),
+                                show_time: show_time.clone(),
+                                place: "Main Theater".to_string(),
+                                venue: venue_name.clone(),
+                                price: amount_str.clone(),
+                                seat_numbers: seat_labels.clone(),
+                            };
+                            match generate_ticket_pdf(&pdf_request).await {
                                 Ok(url) => url,
                                 Err(error) => {
                                     tracing::error!(
@@ -416,22 +408,8 @@ fn valid_pdf_url(value: &str) -> bool {
 }
 
 #[tracing::instrument(skip_all, err, fields(otel.name = "ticket PDF generate", otel.kind = "client"))]
-async fn generate_pdf(endpoint: &str, body: &serde_json::Value) -> Result<String, anyhow::Error> {
-    let response = reqwest::Client::builder()
-        .connect_timeout(std::time::Duration::from_secs(10))
-        .timeout(std::time::Duration::from_secs(60))
-        .build()?
-        .post(endpoint)
-        .json(body)
-        .send()
-        .await?
-        .error_for_status()?;
-    let json: serde_json::Value = response.json().await?;
-    let url = json["pdf_url"]
-        .as_str()
-        .filter(|value| valid_pdf_url(value))
-        .ok_or_else(|| anyhow::anyhow!("PDF API returned no valid ticket URL"))?;
-    Ok(url.to_string())
+async fn generate_ticket_pdf(request: &TicketPdfRequest) -> anyhow::Result<String> {
+    generate_and_upload_ticket_pdf(request).await
 }
 
 #[cfg(test)]
@@ -448,26 +426,5 @@ mod delivery_tests {
         assert!(valid_pdf_url(
             "https://example.com/tickets/123-ticket_order.pdf"
         ));
-    }
-
-    #[tokio::test]
-    async fn failed_pdf_api_never_returns_a_fabricated_ticket_url() {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        for body in [
-            "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n",
-            "HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\n{}",
-        ] {
-            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let endpoint = format!("http://{}", listener.local_addr().unwrap());
-            let server = tokio::spawn(async move {
-                let (mut socket, _) = listener.accept().await.unwrap();
-                let mut request = [0; 4096];
-                let bytes_read = socket.read(&mut request).await.unwrap();
-                assert!(bytes_read > 0, "PDF test server received an empty request");
-                socket.write_all(body.as_bytes()).await.unwrap();
-            });
-            assert!(generate_pdf(&endpoint, &json!({})).await.is_err());
-            server.await.unwrap();
-        }
     }
 }
