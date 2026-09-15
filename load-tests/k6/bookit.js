@@ -42,39 +42,35 @@ function optionsFor(selectedProfile) {
 
   switch (selectedProfile) {
     case 'peak-spike':
-      return {
-        ...common,
-        scenarios: {
-          traffic: {
-            executor: 'ramping-arrival-rate',
-            startRate: 0,
-            timeUnit: '1s',
-            preAllocatedVUs,
-            maxVUs,
-            stages: [
-              { duration: '1m', target: targetRps },
-              { duration, target: targetRps },
-              { duration: '1m', target: 0 },
-            ],
-            gracefulStop: '30s',
-          },
+      common.scenarios = {
+        traffic: {
+          executor: 'ramping-arrival-rate',
+          startRate: 0,
+          timeUnit: '1s',
+          preAllocatedVUs: preAllocatedVUs,
+          maxVUs: maxVUs,
+          stages: [
+            { duration: '1m', target: targetRps },
+            { duration: duration, target: targetRps },
+            { duration: '1m', target: 0 },
+          ],
+          gracefulStop: '30s',
         },
       };
+      return common;
     case 'endurance-soak':
-      return {
-        ...common,
-        scenarios: {
-          traffic: {
-            executor: 'constant-arrival-rate',
-            rate: targetRps,
-            timeUnit: '1s',
-            duration,
-            preAllocatedVUs,
-            maxVUs,
-            gracefulStop: '30s',
-          },
+      common.scenarios = {
+        traffic: {
+          executor: 'constant-arrival-rate',
+          rate: targetRps,
+          timeUnit: '1s',
+          duration: duration,
+          preAllocatedVUs: preAllocatedVUs,
+          maxVUs: maxVUs,
+          gracefulStop: '30s',
         },
       };
+      return common;
     default:
       throw new Error(`Unsupported LOAD_TEST_PROFILE: ${selectedProfile}`);
   }
@@ -90,12 +86,19 @@ export default function () {
     headers,
     tags: { endpoint: path, test_case: profile },
   });
-  check(response, {
-    [`response is HTTP ${expectedStatus}`]: (res) => res.status === expectedStatus,
-    ...(responseBodyContains
-      ? { 'response contains expected value': (res) => String(res.body).includes(responseBodyContains) }
-      : {}),
-  });
+  // k6's embedded JavaScript parser does not support object spread. Build
+  // checks imperatively so this script runs on the pinned k6 image as well as
+  // on older self-hosted runners.
+  const checks = {};
+  checks['response is HTTP ' + expectedStatus] = function (res) {
+    return res.status === expectedStatus;
+  };
+  if (responseBodyContains) {
+    checks['response contains expected value'] = function (res) {
+      return String(res.body).indexOf(responseBodyContains) !== -1;
+    };
+  }
+  check(response, checks);
 
   // Arrival-rate executors pace requests globally. This short delay only
   // yields a VU after the request and does not set the offered request rate.
