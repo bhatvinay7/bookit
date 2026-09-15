@@ -119,7 +119,9 @@ impl RedisCircuitBreaker {
             .unwrap_or(());
     }
 
-    /// Records a failed request (network error or 5xx response) to the downstream service.
+    /// Records a downstream reachability failure (for example, a connection
+    /// refusal or timeout). Application HTTP responses, including 5xx, must
+    /// not call this method because they prove the service is reachable.
     /// Increments the failure counter. If failure threshold is reached or if in HALF_OPEN,
     /// trips the circuit breaker to OPEN for `open_ttl_secs`.
     pub async fn record_failure(&self, service: &str) {

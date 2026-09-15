@@ -127,6 +127,29 @@ fn has_bearer_token(headers: &HeaderMap) -> bool {
         .is_some_and(|token| !token.trim().is_empty())
 }
 
+/// Only network reachability failures may change the transport circuit state.
+///
+/// `reqwest::Client::execute` returns an `Ok(Response)` for all HTTP statuses,
+/// including JSON parsing, validation, authorization, and database errors
+/// produced by http-server.  Those responses are application failures and
+/// must be passed through unchanged.  If reqwest itself fails for a reason
+/// other than connecting to the service or waiting for it to respond, report a
+/// gateway error without poisoning the circuit for every later request.
+fn is_downstream_unreachable(error: &reqwest::Error) -> bool {
+    error.is_connect() || error.is_timeout()
+}
+
+fn upstream_proxy_error_response() -> Response {
+    (
+        StatusCode::BAD_GATEWAY,
+        axum::Json(serde_json::json!({
+            "message": "The upstream response could not be processed.",
+            "code": "UPSTREAM_ERROR"
+        })),
+    )
+        .into_response()
+}
+
 #[tracing::instrument(skip_all, fields(otel.name = "HTTP http-server", otel.kind = "client"))]
 async fn proxy_request(
     target: ProxyTarget<'_>,
@@ -210,16 +233,25 @@ async fn proxy_request(
                 })
         }
         Err(err) => {
-            target
-                .circuit_breaker
-                .record_failure(target.service_name)
-                .await;
-            error!(
-                service = %target.service_name,
-                error = %err,
-                "Downstream service unreachable; recording failure and returning 503"
-            );
-            RedisCircuitBreaker::service_busy_response()
+            if is_downstream_unreachable(&err) {
+                target
+                    .circuit_breaker
+                    .record_failure(target.service_name)
+                    .await;
+                error!(
+                    service = %target.service_name,
+                    error = %err,
+                    "Downstream service unreachable; recording failure and returning 503"
+                );
+                RedisCircuitBreaker::service_busy_response()
+            } else {
+                error!(
+                    service = %target.service_name,
+                    error = %err,
+                    "Proxy request failed without a downstream reachability failure; returning 502 without opening the circuit"
+                );
+                upstream_proxy_error_response()
+            }
         }
     }
 }
@@ -239,5 +271,12 @@ mod tests {
         let mut valid = HeaderMap::new();
         valid.insert(AUTHORIZATION, "Bearer token-value".parse().unwrap());
         assert!(has_bearer_token(&valid));
+    }
+
+    #[test]
+    fn non_reachability_proxy_errors_are_not_reported_as_circuit_open() {
+        let response = upstream_proxy_error_response();
+
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
     }
 }

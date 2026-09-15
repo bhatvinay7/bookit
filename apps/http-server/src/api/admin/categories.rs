@@ -176,8 +176,10 @@ pub async fn update_category(
         .map_err(|_| AppError::bad_request("Invalid Category ID format"))?;
 
     // Better to use typed struct for update
+    let payload_document = bson::to_document(&payload)
+        .map_err(|e| AppError::internal(format!("Failed to serialize category update: {e}")))?;
     let update_doc = doc! {
-        "$set": bson::to_document(&payload).unwrap(),
+        "$set": payload_document,
         "$currentDate": { "updated_at": true }
     };
 

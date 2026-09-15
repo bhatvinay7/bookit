@@ -283,7 +283,10 @@ pub async fn create_schedule(
             bookit_db::models::TimeSlot::Evening => 18,
             bookit_db::models::TimeSlot::Night => 22,
         };
-        chrono::DateTime::from_naive_utc_and_offset(date.and_hms_opt(hour, 0, 0).unwrap(), Utc)
+        let derived_time = date
+            .and_hms_opt(hour, 0, 0)
+            .ok_or_else(|| AppError::internal("Unable to derive start_time from date and slot"))?;
+        chrono::DateTime::from_naive_utc_and_offset(derived_time, Utc)
     };
 
     let end_time = chrono::DateTime::parse_from_rfc3339(&body.end_time)
@@ -321,12 +324,9 @@ pub async fn create_schedule(
         venue_state: body.venue_state,
     };
 
-    let schedule: Schedule = diesel::insert_into(schedules::table)
-        .values(&new_schedule)
-        .get_result(&mut conn)
-        .map_err(|e| AppError::internal(e.to_string()))?;
-
-    // Load base seats from layout
+    // Validate the layout before creating a schedule. This prevents a failed
+    // request from leaving an unusable schedule behind when the layout is
+    // missing or has no seats.
     let mut base_seats: Vec<SeatLayoutSeat> = seat_layout_seats::table
         .filter(seat_layout_seats::layout_id.eq(body.layout_id))
         .load(&mut conn)
@@ -337,6 +337,11 @@ pub async fn create_schedule(
             "Seat layout has no seats — add seats to the layout first",
         ));
     }
+
+    let schedule: Schedule = diesel::insert_into(schedules::table)
+        .values(&new_schedule)
+        .get_result(&mut conn)
+        .map_err(|e| AppError::internal(e.to_string()))?;
 
     // Copy layout seats → schedule_seats (deduplicated by (row_letter, seat_number))
     let default_price = BigDecimal::from(0u32);

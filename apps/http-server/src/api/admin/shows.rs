@@ -89,7 +89,8 @@ pub async fn list_shows(
             .deserialize_current()
             .map_err(|e| AppError::internal(e.to_string()))?;
         let id = show.id.map(|o| o.to_hex()).unwrap_or_default();
-        let mut val = serde_json::to_value(&show).unwrap();
+        let mut val = serde_json::to_value(&show)
+            .map_err(|e| AppError::internal(format!("Failed to serialize show: {e}")))?;
         if let Some(obj) = val.as_object_mut() {
             obj.insert("id".to_string(), serde_json::json!(id));
             obj.remove("_id");
@@ -115,7 +116,8 @@ pub async fn get_show(
         .map_err(|e| AppError::internal(e.to_string()))?
         .ok_or_else(|| AppError::not_found("Show not found"))?;
 
-    let mut val = serde_json::to_value(&show).unwrap();
+    let mut val = serde_json::to_value(&show)
+        .map_err(|e| AppError::internal(format!("Failed to serialize show: {e}")))?;
     if let Some(obj) = val.as_object_mut() {
         obj.insert("id".to_string(), serde_json::json!(id));
         obj.remove("_id");

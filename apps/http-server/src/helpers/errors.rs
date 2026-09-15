@@ -52,7 +52,10 @@ impl IntoResponse for AppError {
             }
             AppError::Internal(e) => {
                 tracing::error!("Internal error: {}", e);
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "An unexpected internal error occurred. Please try again later.".to_string(),
+                )
             }
         };
         (status, Json(json!({ "error": message }))).into_response()
@@ -79,5 +82,17 @@ impl AppError {
 impl From<bson::ser::Error> for AppError {
     fn from(e: bson::ser::Error) -> Self {
         AppError::Internal(anyhow::anyhow!("BSON error: {e}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn internal_errors_do_not_expose_backend_details() {
+        let response = AppError::internal("failed to parse a database value").into_response();
+
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }
