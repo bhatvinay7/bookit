@@ -166,15 +166,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             "/auth/{*path}",
             axum::routing::any(proxy::proxy_to_http_server),
         )
-        .route("/admin", axum::routing::any(proxy::proxy_to_http_server))
+        .route(
+            "/admin",
+            axum::routing::any(proxy::proxy_to_authenticated_http_server),
+        )
         .route(
             "/admin/{*path}",
-            axum::routing::any(proxy::proxy_to_http_server),
+            axum::routing::any(proxy::proxy_to_authenticated_http_server),
         )
-        .route("/user", axum::routing::any(proxy::proxy_to_http_server))
+        .route(
+            "/user",
+            axum::routing::any(proxy::proxy_to_authenticated_http_server),
+        )
         .route(
             "/user/{*path}",
-            axum::routing::any(proxy::proxy_to_http_server),
+            axum::routing::any(proxy::proxy_to_authenticated_http_server),
         );
 
     let app = Router::new()

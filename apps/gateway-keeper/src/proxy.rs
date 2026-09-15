@@ -5,7 +5,7 @@ use axum::{
     extract::{OriginalUri, State},
     http::{
         HeaderMap, Method, StatusCode, Uri,
-        header::{CONNECTION, HOST, TRANSFER_ENCODING},
+        header::{AUTHORIZATION, CONNECTION, HOST, TRANSFER_ENCODING},
     },
     response::{IntoResponse, Response},
 };
@@ -90,6 +90,41 @@ pub async fn proxy_to_http_server(
         circuit_breaker: &state.circuit_breaker,
     };
     proxy_request(target, method, original_uri, headers, body).await
+}
+
+/// Admin and user endpoints require a Bearer token. Check for it before the
+/// downstream circuit breaker so an unauthenticated caller always receives an
+/// authentication failure, even when http-server is temporarily unavailable.
+pub async fn proxy_to_authenticated_http_server(
+    State(state): State<Arc<AppState>>,
+    OriginalUri(original_uri): OriginalUri,
+    method: Method,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Response {
+    if !has_bearer_token(&headers) {
+        return (
+            StatusCode::UNAUTHORIZED,
+            axum::Json(serde_json::json!({ "error": "Missing Authorization header" })),
+        )
+            .into_response();
+    }
+
+    let target = ProxyTarget {
+        service_name: "http-server",
+        base_url: &state.http_server_url,
+        client: &state.http_client,
+        circuit_breaker: &state.circuit_breaker,
+    };
+    proxy_request(target, method, original_uri, headers, body).await
+}
+
+fn has_bearer_token(headers: &HeaderMap) -> bool {
+    headers
+        .get(AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .is_some_and(|token| !token.trim().is_empty())
 }
 
 #[tracing::instrument(skip_all, fields(otel.name = "HTTP http-server", otel.kind = "client"))]
@@ -186,5 +221,23 @@ async fn proxy_request(
             );
             RedisCircuitBreaker::service_busy_response()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bearer_token_check_rejects_missing_or_empty_tokens() {
+        assert!(!has_bearer_token(&HeaderMap::new()));
+
+        let mut empty = HeaderMap::new();
+        empty.insert(AUTHORIZATION, "Bearer ".parse().unwrap());
+        assert!(!has_bearer_token(&empty));
+
+        let mut valid = HeaderMap::new();
+        valid.insert(AUTHORIZATION, "Bearer token-value".parse().unwrap());
+        assert!(has_bearer_token(&valid));
     }
 }
