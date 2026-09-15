@@ -185,7 +185,8 @@ function CreateScheduleWizard({
                 style={{
                   display: "flex", alignItems: "center", gap: 12, padding: "10px 14px",
                   border: `2px solid ${selectedShow?.id === s.id ? "var(--accent)" : "var(--border)"}`,
-                  borderRadius: 10, cursor: "pointer", background: selectedShow?.id === s.id ? "var(--accent-light)" : "white",
+                  borderRadius: 10, cursor: "pointer",
+                  background: selectedShow?.id === s.id ? "var(--accent-light)" : "var(--bg-card)",
                   transition: "all .15s",
                 }}
               >
@@ -237,7 +238,7 @@ function CreateScheduleWizard({
                     .map(s => (
                       <div key={s.id} style={{
                         display: "flex", alignItems: "center", justifyContent: "space-between",
-                        background: "white", padding: "10px 14px", borderRadius: 8,
+                        background: "var(--bg-card)", padding: "10px 14px", borderRadius: 8,
                         border: "1px solid var(--border)"
                       }}>
                         <div>
@@ -298,7 +299,7 @@ function CreateScheduleWizard({
                   padding: "10px 14px",
                   border: `2px solid ${selectedLayout?.id === l.id ? "var(--accent)" : "var(--border)"}`,
                   borderRadius: 10, cursor: "pointer",
-                  background: selectedLayout?.id === l.id ? "var(--accent-light)" : "white",
+                  background: selectedLayout?.id === l.id ? "var(--accent-light)" : "var(--bg-card)",
                   transition: "all .15s",
                   display: "flex", alignItems: "center", justifyContent: "space-between",
                 }}
