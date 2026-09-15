@@ -6,19 +6,20 @@ use axum::{
 };
 use bson::doc;
 use chrono::Utc;
+use diesel::dsl::count_star;
 use diesel::prelude::*;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
 use bookit_db::{
+    db::DbPool,
     models::{Schedule, ScheduleLifecycleState, ScheduleSeat},
     schema::{schedule_seats, schedules},
 };
 use bookit_mongo::models::Show;
 use bookit_redis::keys::{
-    TTL_SHOW_SCHEDULES, cache_schedule_key, cache_schedules_active_key, cache_show_key,
-    cache_show_schedules_key,
+    TTL_SHOW_SCHEDULES, cache_schedule_key, cache_schedules_active_key, cache_show_schedules_key,
 };
 
 use crate::api::state::AppState;
@@ -50,6 +51,54 @@ fn bitmap_snapshot(rconn: &mut redis::Connection, bitmap_key: &str) -> Option<Ve
 fn selected_city(city: Option<&str>) -> Option<&str> {
     city.map(str::trim)
         .filter(|city| !city.is_empty() && !city.eq_ignore_ascii_case("All"))
+}
+
+/// Fetch seat totals for all requested schedules in two grouped queries. This
+/// avoids the two-counts-per-schedule pattern that made public schedule lists
+/// slow enough for the gateway's upstream timeout to trip.
+async fn load_schedule_seat_counts(
+    db_pool: DbPool,
+    schedule_ids: Vec<i32>,
+) -> Result<
+    (
+        std::collections::HashMap<i32, i64>,
+        std::collections::HashMap<i32, i64>,
+    ),
+    AppError,
+> {
+    if schedule_ids.is_empty() {
+        return Ok((
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+        ));
+    }
+
+    tokio::task::spawn_blocking(move || -> Result<_, AppError> {
+        let mut conn = db_pool
+            .get()
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        let totals = schedule_seats::table
+            .filter(schedule_seats::schedule_id.eq_any(&schedule_ids))
+            .group_by(schedule_seats::schedule_id)
+            .select((schedule_seats::schedule_id, count_star()))
+            .load::<(i32, i64)>(&mut conn)
+            .map_err(|e| AppError::internal(e.to_string()))?
+            .into_iter()
+            .collect();
+        let available = schedule_seats::table
+            .filter(schedule_seats::schedule_id.eq_any(&schedule_ids))
+            .filter(schedule_seats::status.eq(bookit_db::models::SeatStatus::Available))
+            .group_by(schedule_seats::schedule_id)
+            .select((schedule_seats::schedule_id, count_star()))
+            .load::<(i32, i64)>(&mut conn)
+            .map_err(|e| AppError::internal(e.to_string()))?
+            .into_iter()
+            .collect();
+
+        Ok((totals, available))
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("Seat-count query task failed: {e}")))?
 }
 
 #[cfg(test)]
@@ -93,60 +142,56 @@ pub async fn list_active_schedules(
         return Ok((StatusCode::OK, Json(val)));
     }
 
-    // 2. Cache Miss -> Query Postgres
-    let mut conn = state
-        .db_pool
-        .get()
-        .map_err(|e| AppError::internal(e.to_string()))?;
+    // 2. Cache Miss -> Query Postgres on a blocking worker
+    let db_pool = state.db_pool.clone();
     let now = Utc::now();
+    let rows: Vec<Schedule> = tokio::task::spawn_blocking(move || -> Result<_, AppError> {
+        let mut conn = db_pool
+            .get()
+            .map_err(|e| AppError::internal(e.to_string()))?;
+        schedules::table
+            .filter(schedules::deleted_at.is_null())
+            .filter(schedules::lifecycle_state.ne(ScheduleLifecycleState::Closed))
+            .filter(schedules::start_time.gt(now))
+            .order(schedules::start_time.asc())
+            .load(&mut conn)
+            .map_err(|e| AppError::internal(e.to_string()))
+    })
+    .await
+    .map_err(|e| AppError::internal(format!("Active-schedules query task failed: {e}")))??;
 
-    let rows: Vec<Schedule> = schedules::table
-        .filter(schedules::deleted_at.is_null())
-        .filter(schedules::lifecycle_state.ne(ScheduleLifecycleState::Closed))
-        .filter(schedules::start_time.gt(now))
-        .order(schedules::start_time.asc())
-        .load(&mut conn)
-        .map_err(|e| AppError::internal(e.to_string()))?;
+    let schedule_ids = rows.iter().map(|schedule| schedule.id).collect();
+    let (total_seats_by_schedule, available_seats_by_schedule) =
+        load_schedule_seat_counts(state.db_pool.clone(), schedule_ids).await?;
 
     let coll = state
         .mongo_client
         .database(&state.mongo_db_name)
         .collection::<Show>("shows");
 
-    let mut results = Vec::new();
-
-    for s in rows {
-        // Fetch show details
-        let show_cache_key = cache_show_key(&s.mongo_show_id);
-
-        // Try show cache
-        let mut show_val: Option<Value> = get_async_cached::<Value>(&state, &show_cache_key).await;
-
-        // If show miss, fetch from Mongo
-        if show_val.is_none()
-            && let Ok(oid) = bson::oid::ObjectId::parse_str(&s.mongo_show_id)
-            && let Ok(Some(show_doc)) = coll.find_one(doc! { "_id": oid }).await
-        {
-            let v = serde_json::to_value(&show_doc).unwrap_or(Value::Null);
-            show_val = Some(v.clone());
-            // Set cache
-            set_async_cached(&state, &show_cache_key, &v, 3600).await;
+    let show_ids = rows
+        .iter()
+        .filter_map(|schedule| bson::oid::ObjectId::parse_str(&schedule.mongo_show_id).ok())
+        .collect::<Vec<_>>();
+    let mut shows_by_id = std::collections::HashMap::new();
+    if !show_ids.is_empty()
+        && let Ok(mut cursor) = coll.find(doc! { "_id": { "$in": show_ids } }).await
+    {
+        use futures::StreamExt;
+        while let Some(Ok(show_doc)) = cursor.next().await {
+            if let Some(id) = show_doc.id
+                && let Ok(value) = serde_json::to_value(&show_doc)
+            {
+                shows_by_id.insert(id.to_hex(), value);
+            }
         }
+    }
 
+    let mut results = Vec::new();
+    for s in rows {
         let seconds_until_booking_open = (s.booking_open_at - Utc::now()).num_seconds();
-
-        let total: i64 = schedule_seats::table
-            .filter(schedule_seats::schedule_id.eq(s.id))
-            .count()
-            .get_result(&mut conn)
-            .unwrap_or(0);
-
-        let available: i64 = schedule_seats::table
-            .filter(schedule_seats::schedule_id.eq(s.id))
-            .filter(schedule_seats::status.eq(bookit_db::models::SeatStatus::Available))
-            .count()
-            .get_result(&mut conn)
-            .unwrap_or(0);
+        let total = total_seats_by_schedule.get(&s.id).copied().unwrap_or(0);
+        let available = available_seats_by_schedule.get(&s.id).copied().unwrap_or(0);
 
         results.push(serde_json::json!({
             "id": s.id,
@@ -162,7 +207,7 @@ pub async fn list_active_schedules(
             "seconds_until_booking_open": seconds_until_booking_open,
             "total_seats": total,
             "available_seats": available,
-            "show": show_val
+            "show": shows_by_id.get(&s.mongo_show_id)
         }));
     }
 
@@ -329,57 +374,58 @@ pub async fn get_schedules_for_show(
     Path(show_id): Path<String>,
     Query(query): Query<ShowSchedulesQuery>,
 ) -> Result<impl IntoResponse, AppError> {
-    let mut conn = state
-        .db_pool
-        .get()
-        .map_err(|e| AppError::internal(e.to_string()))?;
     let now = Utc::now();
-    let city = selected_city(query.city.as_deref());
-    let cache_key = cache_show_schedules_key(&show_id, city);
+    let city = selected_city(query.city.as_deref()).map(str::to_owned);
+    let cache_key = cache_show_schedules_key(&show_id, city.as_deref());
 
     let rows: Vec<Schedule> = if let Some(cached) = get_async_cached(&state, &cache_key).await {
         cached
     } else {
-        let mut schedules_query = schedules::table
-            .filter(schedules::mongo_show_id.eq(&show_id))
-            .filter(schedules::deleted_at.is_null())
-            .filter(schedules::lifecycle_state.ne(ScheduleLifecycleState::Closed))
-            .filter(schedules::start_time.gt(now))
-            .into_boxed();
+        let db_pool = state.db_pool.clone();
+        let show_id = show_id.clone();
+        let loaded: Vec<Schedule> = tokio::task::spawn_blocking(move || -> Result<_, AppError> {
+            let mut conn = db_pool
+                .get()
+                .map_err(|e| AppError::internal(e.to_string()))?;
+            let mut schedules_query = schedules::table
+                .filter(schedules::mongo_show_id.eq(&show_id))
+                .filter(schedules::deleted_at.is_null())
+                .filter(schedules::lifecycle_state.ne(ScheduleLifecycleState::Closed))
+                .filter(schedules::start_time.gt(now))
+                .into_boxed();
 
-        if let Some(city) = city {
-            schedules_query = schedules_query.filter(schedules::venue_city.eq(city));
-        }
+            if let Some(city) = city {
+                schedules_query = schedules_query.filter(schedules::venue_city.eq(city));
+            }
 
-        let loaded: Vec<Schedule> = schedules_query
-            .order(schedules::start_time.asc())
-            .load(&mut conn)
-            .map_err(|e| AppError::internal(e.to_string()))?;
+            schedules_query
+                .order(schedules::start_time.asc())
+                .load(&mut conn)
+                .map_err(|e| AppError::internal(e.to_string()))
+        })
+        .await
+        .map_err(|e| AppError::internal(format!("Show-schedules query task failed: {e}")))??;
         set_async_cached(&state, &cache_key, &loaded, TTL_SHOW_SCHEDULES).await;
         loaded
     };
 
+    let rows = rows
+        .into_iter()
+        .filter(|schedule| {
+            schedule.deleted_at.is_none()
+                && schedule.lifecycle_state != ScheduleLifecycleState::Closed
+                && schedule.start_time > now
+        })
+        .collect::<Vec<_>>();
+    let schedule_ids = rows.iter().map(|schedule| schedule.id).collect();
+    let (total_seats_by_schedule, available_seats_by_schedule) =
+        load_schedule_seat_counts(state.db_pool.clone(), schedule_ids).await?;
+
     let mut results = Vec::new();
-
-    for s in rows.into_iter().filter(|schedule| {
-        schedule.deleted_at.is_none()
-            && schedule.lifecycle_state != ScheduleLifecycleState::Closed
-            && schedule.start_time > now
-    }) {
+    for s in rows {
         let seconds_until_booking_open = (s.booking_open_at - Utc::now()).num_seconds();
-
-        let total: i64 = schedule_seats::table
-            .filter(schedule_seats::schedule_id.eq(s.id))
-            .count()
-            .get_result(&mut conn)
-            .unwrap_or(0);
-
-        let available: i64 = schedule_seats::table
-            .filter(schedule_seats::schedule_id.eq(s.id))
-            .filter(schedule_seats::status.eq(bookit_db::models::SeatStatus::Available))
-            .count()
-            .get_result(&mut conn)
-            .unwrap_or(0);
+        let total = total_seats_by_schedule.get(&s.id).copied().unwrap_or(0);
+        let available = available_seats_by_schedule.get(&s.id).copied().unwrap_or(0);
 
         results.push(serde_json::json!({
             "id": s.id,
