@@ -189,7 +189,9 @@ export default function ShowForm({ initial, token, onSubmit, onCancel, isLoading
     const api = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
     Promise.all([
       fetch(`${api}/api/user/cities`).then(r => r.ok ? r.json() : []).catch(() => []),
-      fetch(`${api}/api/admin/cities`).then(r => r.ok ? r.json() : []).catch(() => []),
+      fetch(`${api}/api/admin/cities`, {
+        headers: { Authorization: `Bearer ${token}` },
+      }).then(r => r.ok ? r.json() : []).catch(() => []),
     ]).then(([userCities, adminCities]) => {
       const merged = Array.from(
         new Set([
@@ -200,7 +202,7 @@ export default function ShowForm({ initial, token, onSubmit, onCancel, isLoading
       ).sort((a, b) => a.localeCompare(b));
       setAvailableCities(merged);
     });
-  }, []);
+  }, [token]);
 
   const set = (key: string, val: string) => setForm(f => ({ ...f, [key]: val }));
 
