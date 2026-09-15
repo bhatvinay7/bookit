@@ -53,6 +53,7 @@ export function ShowDetailModal({ show, city = "All", onClose }: ShowDetailModal
     if (!selectedDate || !selectedSlot) return null;
     return availableSlots.find(s => s.slot === selectedSlot) || null;
   }, [availableSlots, selectedDate, selectedSlot]);
+  const bookingOpen = selectedSchedule?.booking_open === true;
 
   if (!show) return null;
   const ratingColor = show.score && show.score >= 8.5 ? '#10b981' : show.score && show.score >= 7 ? '#f59e0b' : '#ef4444';
@@ -279,20 +280,24 @@ export function ShowDetailModal({ show, city = "All", onClose }: ShowDetailModal
                  )}
 
                  <button
-                   disabled={!selectedSchedule}
+                   disabled={!bookingOpen}
                    onClick={() => {
-                     if (selectedSchedule) {
+                     if (selectedSchedule && bookingOpen) {
                        onClose();
                        router.push(`/schedules/${selectedSchedule.id}`);
                      }
                    }}
                    className={`w-full py-3 text-sm rounded-xl shadow-lg transition-all ${
-                     selectedSchedule 
+                     bookingOpen
                        ? 'btn-primary' 
                        : 'bg-[var(--bg-input)] text-[var(--text-muted)] cursor-not-allowed border border-[var(--border)]'
                    }`}
                  >
-                   {selectedSchedule ? 'Select Seats →' : 'Pick a Time'}
+                   {!selectedSchedule
+                     ? 'Pick a Time'
+                     : bookingOpen
+                       ? 'Select Seats →'
+                       : `Reservations open ${new Date(selectedSchedule.booking_open_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`}
                  </button>
                </div>
             </div>

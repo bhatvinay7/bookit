@@ -262,7 +262,11 @@ export default function ShowDetailsPage() {
             <div className="flex flex-col gap-3 sm:gap-4">
               {filteredSchedules.map(schedule => {
                 const date = new Date(schedule.start_time);
-                const isOpen = (schedule.seconds_until_booking_open ?? 0) <= 0;
+                // The API's lifecycle flag is authoritative. A timestamp alone
+                // must not enable navigation while the schedule is still
+                // Scheduled and the booking service has not opened it.
+                const isOpen = schedule.booking_open === true;
+                const opensAt = new Date(schedule.booking_open_at);
                 
                 return (
                   <motion.div 
@@ -309,9 +313,12 @@ export default function ShowDetailsPage() {
                           <ChevronRight className="h-4 w-4" />
                         </Link>
                       ) : (
-                        <span className="flex min-h-11 cursor-not-allowed items-center rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-2.5 text-sm font-bold text-[var(--text-muted)] sm:px-5">
-                          Opens Soon
-                        </span>
+                        <div className="rounded-xl border border-[var(--border)] bg-[var(--bg-subtle)] px-4 py-2 text-right text-xs font-semibold text-[var(--text-muted)] sm:px-5">
+                          <span className="block">Reservations not open</span>
+                          <span className="block font-normal">
+                            Opens {opensAt.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+                          </span>
+                        </div>
                       )}
                     </div>
                   </motion.div>

@@ -404,6 +404,7 @@ export default function BookingWorkspacePage() {
 
   const show = schedule.show;
   const date = new Date(schedule.start_time);
+  const bookingOpen = schedule.booking_open === true;
 
   if (bookingSuccess) {
     return (
@@ -436,6 +437,41 @@ export default function BookingWorkspacePage() {
             </button>
           </Link>
         </motion.div>
+      </div>
+    );
+  }
+
+  if (!bookingOpen) {
+    return (
+      <div
+        className="min-h-screen px-6 py-8 text-[var(--text-primary)]"
+        style={{
+          background: dark
+            ? "var(--bg)"
+            : "linear-gradient(135deg, #f3f4f6 0%, #e0e7ff 50%, #f3e8ff 100%)",
+        }}
+      >
+        <div className="mx-auto max-w-2xl">
+          <BookingHeader
+            title={show?.title}
+            date={date}
+            venueName={schedule.venue_name || undefined}
+          />
+          <section className="mt-8 rounded-2xl border border-[var(--border)] bg-[var(--card-bg)] p-6 text-center shadow-sm sm:p-8">
+            <p className="text-lg font-bold">Reservations are not open yet</p>
+            <p className="mt-2 text-sm text-[var(--text-secondary)]">
+              Seat selection opens on {new Date(schedule.booking_open_at).toLocaleString('en-US', {
+                weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit',
+              })}.
+            </p>
+            <Link
+              href={`/shows/${schedule.mongo_show_id}`}
+              className="mt-6 inline-flex min-h-11 items-center rounded-xl bg-[var(--accent)] px-5 py-2.5 text-sm font-bold text-white"
+            >
+              Back to show
+            </Link>
+          </section>
+        </div>
       </div>
     );
   }
