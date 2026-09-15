@@ -1,5 +1,5 @@
-/* ─── Admin Light Theme Design System ─────────────────────────────────────────
-   Palette: Indigo accents, clean whites, subtle grays, thin typography (Inter)
+/* ─── Admin Dashboard Design System ───────────────────────────────────────────
+   Palette: Indigo accents, clean surfaces, and accessible contrast (Inter)
    Usage: Import in admin layout or _app
 ──────────────────────────────────────────────────────────────────────────────── */
 
@@ -46,6 +46,40 @@
   --radius-lg:   16px;
 }
 
+/* The provider sets data-dark="true" on the document element. Keep admin
+   surfaces independent from the public-site palette while preserving its theme. */
+[data-dark='true'] {
+  --bg-page:        #080d1d;
+  --bg-card:        rgba(15, 23, 42, 0.94);
+  --bg-sidebar:     rgba(7, 12, 28, 0.97);
+  --bg-hover:       rgba(129, 140, 248, 0.13);
+  --bg-input:       rgba(15, 23, 42, 0.82);
+
+  --border:         rgba(148, 163, 184, 0.2);
+  --border-focus:   #a5b4fc;
+
+  --text-primary:   #f8fafc;
+  --text-secondary: #cbd5e1;
+  --text-muted:     #94a3b8;
+
+  --accent:         #818cf8;
+  --accent-dark:    #a5b4fc;
+  --accent-light:   rgba(129, 140, 248, 0.16);
+
+  --success:        #4ade80;
+  --warning:        #fbbf24;
+  --danger:         #f87171;
+  --info:           #60a5fa;
+
+  --scroll-track:   #0b1224;
+  --scroll-thumb:   #334155;
+  --scroll-thumb-hover: #64748b;
+
+  --shadow-sm: 0 1px 2px rgba(0,0,0,.3), 0 1px 0 rgba(255,255,255,.03) inset;
+  --shadow-md: 0 12px 24px rgba(0,0,0,.24), 0 1px 0 rgba(255,255,255,.03) inset;
+  --shadow-lg: 0 24px 52px rgba(0,0,0,.42), 0 1px 0 rgba(255,255,255,.05) inset;
+}
+
 /* ─── Global reset ─────────────────────────────────────────────────────────── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -56,6 +90,10 @@ body {
   color: var(--text-primary);
   background: var(--bg-page);
   -webkit-font-smoothing: antialiased;
+}
+
+[data-dark='true'] body {
+  background: var(--bg-page);
 }
 
 /* ─── Scrollbars ────────────────────────────────────────────────────────────── */
@@ -155,6 +193,11 @@ body {
   margin-left: 68px;
 }
 
+.admin-content {
+  width: min(100%, 1480px);
+  margin: 0 auto;
+}
+
 /* Mobile breakpoint unified below */
 
 /* ─── Page header ─────────────────────────────────────────────────────────────*/
@@ -211,7 +254,7 @@ table.admin-table th {
   text-align: left;
   font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em;
   color: var(--text-muted);
-  background: #fafbfd;
+  background: var(--bg-input);
   border-bottom: 1px solid var(--border);
 }
 table.admin-table td {
@@ -221,7 +264,7 @@ table.admin-table td {
   vertical-align: middle;
 }
 table.admin-table tr:last-child td { border-bottom: none; }
-table.admin-table tr:hover td { background: #fafbfd; }
+table.admin-table tr:hover td { background: var(--bg-hover); }
 
 /* ─── Badges ─────────────────────────────────────────────────────────────────── */
 .badge {
@@ -236,6 +279,12 @@ table.admin-table tr:hover td { background: #fafbfd; }
 .badge-blue   { background: #dbeafe; color: #2563eb; }
 .badge-gray   { background: #f1f5f9; color: #64748b; }
 .badge-indigo { background: var(--accent-light); color: var(--accent-dark); }
+
+[data-dark='true'] .badge-green  { background: rgba(34, 197, 94, .16); color: #86efac; }
+[data-dark='true'] .badge-yellow { background: rgba(245, 158, 11, .16); color: #fcd34d; }
+[data-dark='true'] .badge-red    { background: rgba(239, 68, 68, .16); color: #fca5a5; }
+[data-dark='true'] .badge-blue   { background: rgba(59, 130, 246, .16); color: #93c5fd; }
+[data-dark='true'] .badge-gray   { background: rgba(148, 163, 184, .14); color: #cbd5e1; }
 
 /* ─── Buttons ────────────────────────────────────────────────────────────────── */
 .btn {
@@ -256,6 +305,11 @@ table.admin-table tr:hover td { background: #fafbfd; }
 .btn-success { background: #dcfce7; color: #16a34a; }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
 .btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn:focus-visible, .admin-modal-close:focus-visible { outline-offset: 2px; }
+
+[data-dark='true'] .btn-danger { background: rgba(239, 68, 68, .15); color: #fca5a5; }
+[data-dark='true'] .btn-danger:hover { background: rgba(239, 68, 68, .24); }
+[data-dark='true'] .btn-success { background: rgba(34, 197, 94, .15); color: #86efac; }
 
 /* ─── Inputs ─────────────────────────────────────────────────────────────────── */
 .admin-input {
@@ -290,10 +344,10 @@ table.admin-table tr:hover td { background: #fafbfd; }
   border-radius: var(--radius-lg);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-lg);
-  width: 90vw; 
-  max-width: 90vw !important;
-  height: 95vh;
-  max-height: 95vh !important;
+  width: min(92vw, 1120px);
+  max-width: 1120px !important;
+  height: auto;
+  max-height: 90vh !important;
   display: flex;
   flex-direction: column;
   animation: slide-up .2s ease;
@@ -346,6 +400,8 @@ table.admin-table tr:hover td { background: #fafbfd; }
 .seat-bar-fill.booked   { background: var(--danger);  }
 .seat-bar-fill.avail    { background: var(--success);  }
 
+[data-dark='true'] .seat-bar { background: rgba(148, 163, 184, .2); }
+
 /* ─── Responsive ─────────────────────────────────────────────────────────────── */
 @media (max-width: 768px) {
   .admin-sidebar { 
@@ -358,8 +414,12 @@ table.admin-table tr:hover td { background: #fafbfd; }
     margin-left: 0 !important; 
     padding: 20px 16px; 
   }
+  .admin-page-header { align-items: stretch; flex-direction: column; }
+  .admin-page-header > :last-child { align-self: flex-start; }
   .admin-stats-grid { grid-template-columns: repeat(2, 1fr); }
 }
 @media (max-width: 480px) {
   .admin-stats-grid { grid-template-columns: 1fr 1fr; }
+  .admin-card-header, .admin-modal-header, .admin-modal-footer { padding-left: 16px; padding-right: 16px; }
+  .admin-card-body, .admin-modal-body { padding: 16px; }
 }

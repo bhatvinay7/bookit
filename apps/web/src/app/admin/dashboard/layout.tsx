@@ -118,12 +118,11 @@ export default function AdminDashboardLayout({
               </span>
             </div>
 
-            {children}
+            <div className="admin-content">{children}</div>
           </main>
         </div>
       </div>
     </ToastProvider>
   );
 }
-
 
