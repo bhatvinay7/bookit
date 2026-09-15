@@ -12,6 +12,17 @@ pub fn cache_schedule_key(schedule_id: i32) -> String {
     format!("cache:schedule:{}", schedule_id)
 }
 
+/// Redis-backed seat totals for schedule-list responses. These are populated
+/// from PostgreSQL on a cache miss, then adjusted by the payment processor
+/// only after its booking/cancellation transaction commits.
+pub fn cache_schedule_total_seats_key(schedule_id: i32) -> String {
+    format!("cache:schedule:{}:seats:total", schedule_id)
+}
+
+pub fn cache_schedule_available_seats_key(schedule_id: i32) -> String {
+    format!("cache:schedule:{}:seats:available", schedule_id)
+}
+
 /// Get the Redis key for a show's schedule metadata, optionally scoped to a city.
 /// This cache never contains seat-layout or live seat-state data.
 pub fn cache_show_schedules_key(mongo_show_id: &str, city: Option<&str>) -> String {
@@ -55,6 +66,7 @@ pub const TTL_SHOWS: u64 = TTL_24_HOURS;
 pub const TTL_DASHBOARD_GRID: u64 = TTL_24_HOURS;
 pub const TTL_MOVIES_ALL: u64 = TTL_24_HOURS;
 pub const TTL_SHOW_SCHEDULES: u64 = TTL_24_HOURS;
+pub const TTL_SCHEDULE_SEAT_COUNTS: u64 = TTL_SHOW_SCHEDULES;
 
 pub fn movie_detail(id: i32) -> String {
     format!("cache:movie:{}:detail", id)

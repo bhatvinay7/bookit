@@ -17,6 +17,30 @@ use crate::{
 use bookit_db::db::DbPool;
 use redis_conn::{RedisPool, SeatLock};
 
+/// Adjust the cache only when HTTP Server has already populated it. PostgreSQL
+/// remains the source of truth and repopulates an absent cache key. This runs
+/// only after the booking/cancellation transaction has committed.
+async fn adjust_cached_available_seats(redis_pool: &RedisPool, schedule_id: i32, delta: i64) {
+    let Ok(mut connection) = redis_pool.get().await else {
+        return;
+    };
+
+    let available_key = redis_conn::keys::cache_schedule_available_seats_key(schedule_id);
+    let script = redis::Script::new(
+        r#"
+        if redis.call('EXISTS', KEYS[1]) == 0 then
+            return nil
+        end
+        return redis.call('INCRBY', KEYS[1], ARGV[1])
+        "#,
+    );
+    let _: redis::RedisResult<Option<i64>> = script
+        .key(available_key)
+        .arg(delta)
+        .invoke_async(&mut *connection)
+        .await;
+}
+
 pub fn parse_seat_ids(payload: &serde_json::Value) -> Vec<i32> {
     if let Some(arr) = payload["seat_ids"].as_array() {
         arr.iter()
@@ -102,6 +126,12 @@ pub async fn process_messages(
                     );
 
                     if tx_result.is_ok() {
+                        adjust_cached_available_seats(
+                            &redis_pool,
+                            schedule_id_val,
+                            i64::try_from(seat_ids.len()).unwrap_or(0),
+                        )
+                        .await;
                         // Broadcast seat_unlocked to WebSocket Room
                         if let Ok(mut cli) = redis_pool.get().await {
                             let channel_name = format!("room:{}", schedule_id_val);
@@ -233,6 +263,12 @@ pub async fn process_messages(
                     );
 
                     if tx_result.is_ok() {
+                        adjust_cached_available_seats(
+                            &redis_pool,
+                            schedule_id_val,
+                            -i64::try_from(seat_ids.len()).unwrap_or(0),
+                        )
+                        .await;
                         // Release Redis locks and mark as booked
                         let bitmap_key = redis_conn::keys::schedule_seat_bitmap(schedule_id_val);
                         for &seat_id in &seat_ids {
