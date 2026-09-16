@@ -669,7 +669,7 @@ impl SeatLock for SingleNodeLock {
         {
             let members: redis::RedisResult<Vec<String>> = redis::cmd("ZRANGEBYSCORE")
                 .arg(&user_zset_key)
-                .arg(now)        // min score = now (not-yet-expired)
+                .arg(now) // min score = now (not-yet-expired)
                 .arg("+inf")
                 .query_async(&mut *cli)
                 .await;

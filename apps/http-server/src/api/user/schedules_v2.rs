@@ -3,7 +3,6 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-
 };
 use bson::doc;
 use chrono::Utc;
@@ -570,4 +569,3 @@ pub async fn get_my_locked_seats(
         })),
     ))
 }
-

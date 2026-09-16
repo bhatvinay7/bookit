@@ -76,4 +76,3 @@ pub trait SeatLock: Send + Sync {
         queue_member: &str,
     );
 }
-
