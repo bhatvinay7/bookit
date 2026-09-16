@@ -1,6 +1,3 @@
-use bookit_mongo::models::show::Show;
-use futures::StreamExt;
-use mongodb::{Collection, bson::doc};
 use reqwest::Client as HttpClient;
 use serde_json::json;
 
@@ -64,7 +61,17 @@ pub async fn init_es_index(client: &HttpClient, es_url: &str) {
                     }
                 },
                 "description": { "type": "text" },
-                "venue": { "type": "text" },
+                "city": {
+                    "type": "keyword",
+                    "fields": { "text": { "type": "text" } }
+                },
+                "venue": {
+                    "type": "text",
+                    "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } }
+                },
+                "thumbnail_url": { "type": "keyword", "index": false },
+                "poster_url": { "type": "keyword", "index": false },
+                "category_ids": { "type": "keyword" },
                 "tags": { "type": "keyword" },
                 "show_type": { "type": "keyword" }
             }
@@ -77,22 +84,4 @@ pub async fn init_es_index(client: &HttpClient, es_url: &str) {
         Ok(r) => eprintln!("Failed to create index: {:?}", r.text().await),
         Err(e) => eprintln!("Failed to connect to Elasticsearch: {}", e),
     }
-}
-
-pub async fn initial_sync(coll: &Collection<Show>, client: &HttpClient, es_url: &str) {
-    // Basic bulk index. For small datasets (<10,000 items), looping is fine.
-    println!("Starting initial sync from MongoDB to Elasticsearch...");
-    let mut cursor = coll.find(doc! {}).await.expect("Failed to find shows");
-
-    let mut count = 0;
-    while let Some(result) = cursor.next().await {
-        if let Ok(show) = result
-            && let Some(oid) = &show.id
-        {
-            let doc_url = format!("{}/shows/_doc/{}", es_url, oid.to_hex());
-            let _ = client.put(&doc_url).json(&show).send().await;
-            count += 1;
-        }
-    }
-    println!("Initial sync complete. Indexed {} shows.", count);
 }
