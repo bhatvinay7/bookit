@@ -99,6 +99,19 @@ pub fn seat_lock_key(schedule_id: i32, seat_id: i32) -> String {
     format!("{}:{}", schedule_id, seat_id)
 }
 
+/// Get the per-user-per-seat context key.
+///
+/// This is an O(1) existence check: "does user `user_id` currently hold the
+/// lock for `seat_id` in `schedule_id`?"  It is written and deleted
+/// **atomically** with `seat_lock_key` in every Lua script, so if it exists,
+/// Key 1 (`seat_lock_key`) and the user ZSET entry also exist.
+///
+/// Uses a `{schedule_id}` hash-tag to co-locate on the same Redis slot as the
+/// bitmap and room/user ZSET keys.
+pub fn seat_user_context_key(schedule_id: i32, seat_id: i32, user_id: i32) -> String {
+    format!("seat_ctx:{{{}}}:{}:{}", schedule_id, seat_id, user_id)
+}
+
 /// Get the Redis zset used for delayed seat-processing entries.
 pub fn seat_processing_queue_key() -> String {
     "cache:seat_processing:queue".to_string()
