@@ -117,7 +117,7 @@ fn build_r2_client() -> anyhow::Result<S3Client> {
 
 fn upload_settings() -> anyhow::Result<(String, String)> {
     let bucket = required("CLOUDFLARE_R2_BUCKET")?;
-    let public_url = required("CLOUDFLARE_R2_PUBLIC_URL")?;
+    let public_url = required("NEXT_PUBLIC_R2_PUBLIC_URL")?;
     let valid_public_url = reqwest::Url::parse(&public_url).is_ok_and(|url| {
         matches!(url.scheme(), "http" | "https")
             && url.host_str().is_some()
@@ -127,7 +127,7 @@ fn upload_settings() -> anyhow::Result<(String, String)> {
             && url.fragment().is_none()
     });
     if !valid_public_url {
-        anyhow::bail!("CLOUDFLARE_R2_PUBLIC_URL must be an HTTP(S) public bucket URL");
+        anyhow::bail!("NEXT_PUBLIC_R2_PUBLIC_URL must be an HTTP(S) public bucket URL");
     }
     Ok((bucket, public_url))
 }
