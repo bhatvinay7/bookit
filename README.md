@@ -98,12 +98,12 @@ runtime request path.
 | `gateway-keeper` | HTTP `8080`, gRPC `50052` | Edge routing, seat coordination, circuit breaking and gRPC locking | Redis, RabbitMQ, HTTP API, search | 1–5 pods, CPU target 75% |
 | `http-server` | HTTP `8082` | Authentication, admin APIs, schedules, booking, tickets, uploads and payments | PostgreSQL, MongoDB, Redis, RabbitMQ, R2 | 1–5 pods, CPU target 75% |
 | `ws-server` | WebSocket `8081` | Client sessions and real-time seat-event fan-out | Redis Pub/Sub, gateway gRPC | 1–5 pods, CPU target 75% |
-| `search-server` | HTTP health `8084`, gRPC `50051` | Search API (hybrid fuzzy + phonetic) and Elasticsearch synchronization | Elasticsearch, MongoDB, PostgreSQL, Redis Stream | 1–5 pods, CPU target 75% |
+| `search-server` | HTTP health `8084`, gRPC `50051` | Search API (hybrid fuzzy + phonetic) and durable Elasticsearch synchronization | Elasticsearch, MongoDB search outbox, PostgreSQL schedules | 1–5 pods, CPU target 75% |
 | `lock-server` | RabbitMQ consumer | Serializes seat state per show and reconciles expired locks | RabbitMQ, Redis, PostgreSQL | 1–5 pods, CPU target 75%; 10 tasks/pod by default |
 | `payment-processor` | RabbitMQ consumer | Completes/cancels orders and records audit/outbox events | RabbitMQ, PostgreSQL, Redis, Razorpay | 1–5 pods, CPU target 75%; one consumer loop/pod |
 | `outbox-server` | PostgreSQL consumer | Reliably publishes transactional outbox events to RabbitMQ | PostgreSQL, RabbitMQ | 1 pod active |
 | `notification-worker` | RabbitMQ consumer | Creates ticket records/PDF requests and sends booking email | RabbitMQ, PostgreSQL, HTTP API, Gmail/SMTP | 1–5 pods, CPU target 75%; one consumer loop/pod |
-| `cdc-worker` | Mongo change stream + Redis Stream | Moves show changes from MongoDB into the search update stream | MongoDB, Redis | 1–5 pods, CPU target 75% |
+| `cdc-worker` | MongoDB change stream | Materialises show changes into the MongoDB search outbox | MongoDB | 1–5 pods, CPU target 75% |
 
 The ingress routes all public API and gRPC traffic through `gateway-keeper`.
 Gateway routes under `/api/*` forward to the internal HTTP or search services
@@ -213,17 +213,24 @@ are committed and should route poison messages to bounded dead-letter queues.
 flowchart LR
     A[Admin changes show] --> M[(MongoDB)]
     M -->|change stream + resume token| C[CDC worker]
-    C -->|XADD cdc:shows| R[(Redis Stream)]
-    R -->|consumer group, batches of 10| S[Search server]
+    C -->|durable event + checkpoint| O[(MongoDB search outbox)]
+    O -->|ordered retry until acknowledged| S[Search server]
     S -->|PUT / DELETE document| E[(Elasticsearch)]
     G[Gateway search request] -->|gRPC| S
     S --> E
 ```
 
-The CDC worker stores its MongoDB resume token in Redis. Search reads up to ten
-stream records per blocking call and acknowledges after handling. Production
-should give each search replica a unique consumer name, reclaim abandoned
-pending entries, monitor consumer-group lag, and make index updates idempotent.
+The CDC worker reads MongoDB's `shows` change stream and writes a compact,
+durable search event to the same MongoDB database before advancing that
+consumer's resume-token checkpoint. The outbox stores the document ID,
+operation, title, city, thumbnail URL, venue, and the Elasticsearch document
+payload. It is not a copy of MongoDB and is never used to query show details.
+
+Search claims only the oldest unacknowledged event in source order. It marks an
+event indexed only after Elasticsearch acknowledges the PUT or DELETE; failures
+remain queued with exponential retry. A DELETE returning 404 is successful, so
+replaying an already-applied delete is safe. Ordering prevents an old upsert
+from recreating a document after a newer delete.
 
 ## Deployment topology
 
@@ -328,8 +335,8 @@ uniform:
   actor queue is twice that value.
 - Payment processor: one sequential consumer loop per pod.
 - Notification worker: one sequential consumer loop per pod.
-- Search synchronization: one Redis Stream loop per search pod, reading up to
-  ten records per call.
+- Search synchronization: each search pod claims from the durable MongoDB
+  outbox. Events remain globally ordered to make updates and deletes race-free.
 
 Queue workers should scale on ready-message count, oldest-message age and
 processing latency rather than CPU alone. KEDA or a Prometheus-backed HPA is a
@@ -463,7 +470,7 @@ flowchart TD
 HTTP entrypoints create tracing spans, services emit structured JSON logs, and
 the shared telemetry package attaches service and environment fields.
 HTTP/gRPC forwarding, RabbitMQ deliveries, the durable payment outbox and CDC
-Redis Stream messages now carry W3C trace context. Next.js initializes a server
+search-outbox events now carry W3C trace context. Next.js initializes a server
 OpenTelemetry SDK. See [telemetry coverage](TELEMETRY.md) for limits and checks. Individual
 PostgreSQL, MongoDB, Redis and Elasticsearch operations need child spans before
 the system can claim full query-level tracing.
@@ -474,7 +481,8 @@ Monitor at minimum:
 - CPU throttling, memory working set, restarts and unavailable replicas;
 - database connection use/wait time, slow operations and replication lag;
 - RabbitMQ ready/unacked messages, redeliveries and oldest-message age;
-- Redis latency, memory, evictions, stream pending entries and lock contention;
+- Redis latency, memory, evictions and lock contention; MongoDB search-outbox
+  backlog, retry age and indexing failures;
 - OTEL accepted/refused/dropped signals and exporter queue utilization;
 - Fluent Bit retry backlog, Loki ingestion/storage, Tempo ingestion/storage;
 - booking success, payment reconciliation and notification failure rates.
@@ -495,7 +503,8 @@ data. Use trace/log fields with retention and access controls instead.
 
 ### Messaging
 
-- Assume RabbitMQ and Redis Stream delivery is at least once.
+- Assume RabbitMQ delivery is at least once. Search outbox delivery is at least
+  once until Elasticsearch acknowledges the operation.
 - Consumers must be idempotent and safe after process death between commit and
   acknowledgement.
 - Use publisher confirms and a transactional outbox when a database write and

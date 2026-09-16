@@ -1302,15 +1302,13 @@ dependencies = [
 name = "cdc-worker"
 version = "0.1.0"
 dependencies = [
- "bookit-mongo",
+ "anyhow",
  "bookit-telemetry",
  "bson",
  "chrono",
  "dotenvy",
  "futures",
  "mongodb",
- "redis",
- "redis-conn",
  "serde",
  "serde_json",
  "tokio",
@@ -4802,8 +4800,6 @@ dependencies = [
  "pin-project-lite",
  "rand 0.10.2",
  "ryu",
- "serde",
- "serde_json",
  "sha1_smol",
  "socket2 0.6.5",
  "tokio",
@@ -5267,20 +5263,17 @@ dependencies = [
 name = "search-server"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "axum 0.7.9",
  "bookit-db",
- "bookit-mongo",
  "bookit-proto",
  "bookit-telemetry",
  "bson",
  "chrono",
  "diesel",
  "dotenvy",
- "futures",
  "mongodb",
  "prost 0.13.5",
- "redis",
- "redis-conn",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
