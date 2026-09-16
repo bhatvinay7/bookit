@@ -36,7 +36,7 @@ pub async fn ensure_collections(database: &Database) -> Result<()> {
                 .options(
                     IndexOptions::builder()
                         .expire_after(std::time::Duration::from_secs(7 * 24 * 60 * 60))
-                        .build()
+                        .build(),
                 )
                 .build(),
         )
@@ -51,7 +51,7 @@ pub async fn claim_next(database: &Database) -> Result<Option<ClaimedSearchEvent
         .find_one(doc! { "_id": "elasticsearch" })
         .await
         .context("failed to read MongoDB search outbox checkpoint")?;
-    
+
     let last_sequence = checkpoint
         .and_then(|doc| doc.get_i64("last_sequence").ok())
         .unwrap_or(0);
@@ -98,9 +98,7 @@ fn parse_claimed_event(document: Document) -> Result<ClaimedSearchEvent> {
             .to_owned(),
         document: match value("document") {
             Bson::Null => None,
-            val => {
-                Some(mongodb::bson::from_bson(val).context("invalid search document payload")?)
-            }
+            val => Some(mongodb::bson::from_bson(val).context("invalid search document payload")?),
         },
         trace_context: mongodb::bson::from_bson(value("trace_context"))
             .unwrap_or_else(|_| Value::Null),
