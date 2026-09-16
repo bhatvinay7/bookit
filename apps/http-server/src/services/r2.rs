@@ -95,7 +95,7 @@ pub async fn upload_pdf_bytes(
     let key = format!("tickets/{}-{}", Utc::now().timestamp_millis(), file_name);
 
     if std::env::var("APP_MODE").unwrap_or_default() == "test" {
-        let pub_url = std::env::var("CLOUDFLARE_R2_PUBLIC_URL")
+        let pub_url = std::env::var("NEXT_PUBLIC_R2_PUBLIC_URL")
             .unwrap_or_else(|_| "https://example.com".into());
         let url = format!("{}/{}", pub_url.trim_end_matches('/'), key);
         return Ok(UploadResult { url, key });
@@ -125,7 +125,7 @@ fn upload_settings() -> Result<(String, String), AppError> {
             .ok_or_else(|| AppError::internal(format!("{name} must be configured")))
     };
     let bucket = required("CLOUDFLARE_R2_BUCKET")?;
-    let public_url = required("CLOUDFLARE_R2_PUBLIC_URL")?;
+    let public_url = required("NEXT_PUBLIC_R2_PUBLIC_URL")?;
     let valid = reqwest::Url::parse(&public_url).is_ok_and(|url| {
         matches!(url.scheme(), "http" | "https")
             && url.host_str().is_some()
@@ -136,7 +136,7 @@ fn upload_settings() -> Result<(String, String), AppError> {
     });
     if !valid {
         return Err(AppError::internal(
-            "CLOUDFLARE_R2_PUBLIC_URL must be an HTTP(S) public bucket URL",
+            "NEXT_PUBLIC_R2_PUBLIC_URL must be an HTTP(S) public bucket URL",
         ));
     }
     Ok((bucket, public_url))
