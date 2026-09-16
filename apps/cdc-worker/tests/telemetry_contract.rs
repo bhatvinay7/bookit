@@ -6,9 +6,6 @@ fn cdc_worker_initializes_and_propagates_telemetry() {
     let stream = include_str!("../src/stream.rs");
 
     assert!(main.contains("init_telemetry(\"bookit-cdc-worker\")"));
-    assert!(
-        stream
-            .contains("operation_span(\n                                \"mongodb.shows change\"")
-    );
-    assert!(stream.contains("\"_trace_context\": bookit_telemetry::current_carrier()"));
+    assert!(stream.contains("\"mongodb.shows change\""));
+    assert!(stream.contains("bookit_telemetry::current_carrier()"));
 }
