@@ -133,7 +133,11 @@ pub async fn request_payment(
         schedule_seats::table
             .filter(schedule_seats::id.eq_any(&request.seat_ids))
             .filter(schedule_seats::schedule_id.eq(request.schedule_id))
-            .select((schedule_seats::id, schedule_seats::price, schedule_seats::status))
+            .select((
+                schedule_seats::id,
+                schedule_seats::price,
+                schedule_seats::status,
+            ))
             .load(&mut conn)
             .map_err(|_| AppError::internal("failed to load seats"))?;
 
