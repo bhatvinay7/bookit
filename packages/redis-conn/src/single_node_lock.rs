@@ -253,8 +253,11 @@ impl SeatLock for SingleNodeLock {
         }
         success
     }
-    /// Executes an atomic Lua script for acquiring a seat lock, updating user ZSET, room ZSET,
-    /// seat processing queue ZSET, and setting bitfield state to 0b01 (locked).
+    /// Executes an atomic Lua script for acquiring a seat lock.
+    /// Atomically writes:
+    ///   Key 1 – `seat_lock_key`                  → owner user_id (PX TTL)
+    ///   Key 2 – `seat_user_context_key`           → "1"           (PX TTL)
+    ///   user ZSET, room ZSET, queue ZSET, bitmap  (unchanged semantics)
     async fn acquire_seat_lock_lua(
         &self,
         showtime_id: i32,
@@ -271,6 +274,7 @@ impl SeatLock for SingleNodeLock {
             return false;
         };
         let lock_key = crate::keys::seat_lock_key(showtime_id, seat_id);
+        let context_key = crate::keys::seat_user_context_key(showtime_id, seat_id, user_id);
         let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
         let room_zset_key = format!("{{{}}}:locks", showtime_id);
         let queue_key = crate::keys::seat_processing_queue_key();
@@ -284,6 +288,8 @@ impl SeatLock for SingleNodeLock {
         let bit_offset = seat_id as usize * 2;
 
         if let Ok(mut cli) = pool.get().await {
+            // KEYS: [lock_key, context_key, user_zset, room_zset, queue, bitmap]
+            // ARGV: [user_id, ttl_ms, expiry, seat_id, processing_expiry, queue_member, bit_offset]
             let script = redis::Script::new(
                 r#"
                 local current_owner = redis.call("get", KEYS[1])
@@ -291,15 +297,17 @@ impl SeatLock for SingleNodeLock {
                     return 0
                 end
                 redis.call("set", KEYS[1], ARGV[1], "PX", ARGV[2])
-                redis.call("zadd", KEYS[2], ARGV[3], ARGV[4])
-                redis.call("zadd", KEYS[3], ARGV[3], ARGV[4] .. ":" .. ARGV[1])
-                redis.call("zadd", KEYS[4], ARGV[5], ARGV[6])
-                redis.call("bitfield", KEYS[5], "SET", "u2", ARGV[7], 1)
+                redis.call("set", KEYS[2], "1",    "PX", ARGV[2])
+                redis.call("zadd", KEYS[3], ARGV[3], ARGV[4])
+                redis.call("zadd", KEYS[4], ARGV[3], ARGV[4] .. ":" .. ARGV[1])
+                redis.call("zadd", KEYS[5], ARGV[5], ARGV[6])
+                redis.call("bitfield", KEYS[6], "SET", "u2", ARGV[7], 1)
                 return 1
                 "#,
             );
             let res: redis::RedisResult<i32> = script
                 .key(&lock_key)
+                .key(&context_key)
                 .key(&user_zset_key)
                 .key(&room_zset_key)
                 .key(&queue_key)
@@ -332,7 +340,9 @@ impl SeatLock for SingleNodeLock {
         }
     }
 
-    /// Executes an atomic Lua script to release an expired lock and reset the bitfield state to 0b00 (available).
+    /// Executes an atomic Lua script to release an expired lock.
+    /// Atomically deletes Key 1 (lock) and Key 2 (context) when the lock belongs
+    /// to `user_id` or has already expired.
     async fn release_expired_lock_lua(
         &self,
         showtime_id: i32,
@@ -344,6 +354,7 @@ impl SeatLock for SingleNodeLock {
             return false;
         };
         let lock_key = crate::keys::seat_lock_key(showtime_id, seat_id);
+        let context_key = crate::keys::seat_user_context_key(showtime_id, seat_id, user_id);
         let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
         let room_zset_key = format!("{{{}}}:locks", showtime_id);
         let queue_key = crate::keys::seat_processing_queue_key();
@@ -351,24 +362,28 @@ impl SeatLock for SingleNodeLock {
         let bit_offset = seat_id as usize * 2;
 
         if let Ok(mut cli) = pool.get().await {
+            // KEYS: [lock_key, context_key, user_zset, room_zset, queue, bitmap]
+            // ARGV: [user_id, seat_id, queue_member, bit_offset]
             let script = redis::Script::new(
                 r#"
                 local owner = redis.call("get", KEYS[1])
                 if not owner or owner == ARGV[1] then
                     redis.call("del", KEYS[1])
-                    redis.call("zrem", KEYS[2], ARGV[2])
-                    redis.call("zrem", KEYS[3], ARGV[2] .. ":" .. ARGV[1])
-                    redis.call("zrem", KEYS[4], ARGV[3])
-                    redis.call("bitfield", KEYS[5], "SET", "u2", ARGV[4], 0)
+                    redis.call("del", KEYS[2])
+                    redis.call("zrem", KEYS[3], ARGV[2])
+                    redis.call("zrem", KEYS[4], ARGV[2] .. ":" .. ARGV[1])
+                    redis.call("zrem", KEYS[5], ARGV[3])
+                    redis.call("bitfield", KEYS[6], "SET", "u2", ARGV[4], 0)
                     return 1
                 else
-                    redis.call("zrem", KEYS[4], ARGV[3])
+                    redis.call("zrem", KEYS[5], ARGV[3])
                     return 0
                 end
                 "#,
             );
             let result: redis::RedisResult<i32> = script
                 .key(&lock_key)
+                .key(&context_key)
                 .key(&user_zset_key)
                 .key(&room_zset_key)
                 .key(&queue_key)
@@ -393,12 +408,14 @@ impl SeatLock for SingleNodeLock {
         }
     }
 
-    /// Releases a single-node seat lock using a Lua script so only the lock owner can delete their lock.
+    /// Releases a seat lock. Only the lock owner can release.
+    /// Atomically deletes Key 1 (lock) + Key 2 (context) + all ZSET/bitmap state.
     async fn release_lock(&self, showtime_id: i32, seat_id: i32, user_id: i32) -> bool {
         let Some(pool) = self.pool_for_seat(showtime_id, seat_id) else {
             return false;
         };
         let lock_key = crate::keys::seat_lock_key(showtime_id, seat_id);
+        let context_key = crate::keys::seat_user_context_key(showtime_id, seat_id, user_id);
         let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
         let room_zset_key = format!("{{{}}}:locks", showtime_id);
         let queue_key = crate::keys::seat_processing_queue_key();
@@ -412,15 +429,18 @@ impl SeatLock for SingleNodeLock {
         let bit_offset = seat_id as usize * 2;
 
         if let Ok(mut cli) = pool.get().await {
+            // KEYS: [lock_key, context_key, user_zset, room_zset, queue, bitmap]
+            // ARGV: [user_id, seat_id, queue_member, bit_offset]
             let script = redis::Script::new(
                 r#"
                 local owner = redis.call("get", KEYS[1])
                 if not owner or owner == ARGV[1] then
                     redis.call("del", KEYS[1])
-                    redis.call("zrem", KEYS[2], ARGV[2])
-                    redis.call("zrem", KEYS[3], ARGV[2] .. ":" .. ARGV[1])
-                    redis.call("zrem", KEYS[4], ARGV[3])
-                    redis.call("bitfield", KEYS[5], "SET", "u2", ARGV[4], 0)
+                    redis.call("del", KEYS[2])
+                    redis.call("zrem", KEYS[3], ARGV[2])
+                    redis.call("zrem", KEYS[4], ARGV[2] .. ":" .. ARGV[1])
+                    redis.call("zrem", KEYS[5], ARGV[3])
+                    redis.call("bitfield", KEYS[6], "SET", "u2", ARGV[4], 0)
                     return 1
                 else
                     return 0
@@ -429,6 +449,7 @@ impl SeatLock for SingleNodeLock {
             );
             let res: redis::RedisResult<i32> = script
                 .key(&lock_key)
+                .key(&context_key)
                 .key(&user_zset_key)
                 .key(&room_zset_key)
                 .key(&queue_key)
@@ -479,6 +500,7 @@ impl SeatLock for SingleNodeLock {
             return false;
         };
         let lock_key = crate::keys::seat_lock_key(showtime_id, seat_id);
+        let context_key = crate::keys::seat_user_context_key(showtime_id, seat_id, user_id);
         let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
         let room_zset_key = format!("{{{}}}:locks", showtime_id);
         let queue_key = crate::keys::seat_processing_queue_key();
@@ -492,15 +514,17 @@ impl SeatLock for SingleNodeLock {
         let bit_offset = seat_id as usize * 2;
 
         if let Ok(mut cli) = pool.get().await {
+            // KEYS: [lock_key, context_key, user_zset, room_zset, queue, bitmap]
             let script = redis::Script::new(
                 r#"
                 local owner = redis.call("get", KEYS[1])
                 if not owner or owner == ARGV[1] then
                     redis.call("del", KEYS[1])
-                    redis.call("zrem", KEYS[2], ARGV[2])
-                    redis.call("zrem", KEYS[3], ARGV[2] .. ":" .. ARGV[1])
-                    redis.call("zrem", KEYS[4], ARGV[3])
-                    redis.call("bitfield", KEYS[5], "SET", "u2", ARGV[4], 2)
+                    redis.call("del", KEYS[2])
+                    redis.call("zrem", KEYS[3], ARGV[2])
+                    redis.call("zrem", KEYS[4], ARGV[2] .. ":" .. ARGV[1])
+                    redis.call("zrem", KEYS[5], ARGV[3])
+                    redis.call("bitfield", KEYS[6], "SET", "u2", ARGV[4], 2)
                     return 1
                 else
                     return 0
@@ -509,6 +533,7 @@ impl SeatLock for SingleNodeLock {
             );
             let res: redis::RedisResult<i32> = script
                 .key(&lock_key)
+                .key(&context_key)
                 .key(&user_zset_key)
                 .key(&room_zset_key)
                 .key(&queue_key)
@@ -550,6 +575,7 @@ impl SeatLock for SingleNodeLock {
             return;
         };
         let lock_key = crate::keys::seat_lock_key(showtime_id, seat_id);
+        let context_key = crate::keys::seat_user_context_key(showtime_id, seat_id, user_id);
         let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
         let room_zset_key = format!("{{{}}}:locks", showtime_id);
         let queue_key = crate::keys::seat_processing_queue_key();
@@ -557,21 +583,24 @@ impl SeatLock for SingleNodeLock {
         let bit_offset = seat_id as usize * 2;
 
         if let Ok(mut cli) = pool.get().await {
+            // KEYS: [lock_key, context_key, user_zset, room_zset, queue, bitmap]
             let script = redis::Script::new(
                 r#"
                 local owner = redis.call("get", KEYS[1])
                 if not owner or owner == ARGV[1] then
                     redis.call("del", KEYS[1])
+                    redis.call("del", KEYS[2])
                 end
-                redis.call("zrem", KEYS[2], ARGV[2])
-                redis.call("zrem", KEYS[3], ARGV[2] .. ":" .. ARGV[1])
-                redis.call("zrem", KEYS[4], ARGV[3])
-                redis.call("bitfield", KEYS[5], "SET", "u2", ARGV[4], 2)
+                redis.call("zrem", KEYS[3], ARGV[2])
+                redis.call("zrem", KEYS[4], ARGV[2] .. ":" .. ARGV[1])
+                redis.call("zrem", KEYS[5], ARGV[3])
+                redis.call("bitfield", KEYS[6], "SET", "u2", ARGV[4], 2)
                 return 1
                 "#,
             );
             let _: redis::RedisResult<i32> = script
                 .key(&lock_key)
+                .key(&context_key)
                 .key(&user_zset_key)
                 .key(&room_zset_key)
                 .key(&queue_key)
@@ -607,6 +636,50 @@ impl SeatLock for SingleNodeLock {
             owner
         } else {
             None
+        }
+    }
+
+    /// O(1) ownership check via the per-user context key (Key 2).
+    /// Returns `true` iff `user_id` currently holds the lock for `seat_id`.
+    async fn user_holds_lock(&self, showtime_id: i32, seat_id: i32, user_id: i32) -> bool {
+        let Some(pool) = self.pool_for_seat(showtime_id, seat_id) else {
+            return false;
+        };
+        let context_key = crate::keys::seat_user_context_key(showtime_id, seat_id, user_id);
+        if let Ok(mut cli) = pool.get().await {
+            let exists: redis::RedisResult<bool> = redis::cmd("EXISTS")
+                .arg(&context_key)
+                .query_async(&mut *cli)
+                .await;
+            exists.unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    /// Returns seat IDs currently locked by `user_id` for `showtime_id` by
+    /// reading the existing `{showtime_id}:user:{user_id}` ZSET.
+    /// Members with score > now are still within their TTL.
+    async fn get_user_locked_seats(&self, showtime_id: i32, user_id: i32) -> Vec<i32> {
+        let user_zset_key = format!("{{{}}}:user:{}", showtime_id, user_id);
+        let now = chrono::Utc::now().timestamp();
+        // Try the primary pool; the ZSET is replicated to all nodes via zadd_cluster.
+        if let Some(pool) = self.pools.first()
+            && let Ok(mut cli) = pool.get().await
+        {
+            let members: redis::RedisResult<Vec<String>> = redis::cmd("ZRANGEBYSCORE")
+                .arg(&user_zset_key)
+                .arg(now)        // min score = now (not-yet-expired)
+                .arg("+inf")
+                .query_async(&mut *cli)
+                .await;
+            members
+                .unwrap_or_default()
+                .into_iter()
+                .filter_map(|m| m.parse::<i32>().ok())
+                .collect()
+        } else {
+            vec![]
         }
     }
 

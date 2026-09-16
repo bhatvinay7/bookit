@@ -109,14 +109,16 @@ pub async fn request_payment(
         ));
     }
 
-    // Verify ownership before creating the durable payment request. The checkout marker is
-    // retained until the payment processor succeeds or rejects the message.
+    // Verify ownership before creating the durable payment request.
+    // user_holds_lock checks the per-user context key (Key 2) — O(1) per seat.
+    // Because both keys are written/deleted atomically this is equivalent to
+    // checking Key 1, but scoped to the authenticated user.
     for seat_id in &request.seat_ids {
-        let owner = state
+        if !state
             .single_node_lock
-            .get_lock_owner(request.schedule_id, *seat_id)
-            .await;
-        if owner != Some(user_id) {
+            .user_holds_lock(request.schedule_id, *seat_id, user_id)
+            .await
+        {
             return Err(AppError::bad_request(
                 "one or more seats are not locked by this user",
             ));
@@ -124,21 +126,34 @@ pub async fn request_payment(
     }
 
     use bookit_db::schema::schedule_seats;
-    let seat_prices: Vec<bigdecimal::BigDecimal> = schedule_seats::table
-        .filter(schedule_seats::id.eq_any(&request.seat_ids))
-        .filter(schedule_seats::schedule_id.eq(request.schedule_id))
-        .select(schedule_seats::price)
-        .load(&mut conn)
-        .map_err(|_| AppError::internal("failed to load seats"))?;
+    // Validate seat prices and check DB-level availability as defence-in-depth.
+    // The payment processor re-validates locks, but a stale DB row here is a
+    // signal that the seat was already booked by a prior payment.
+    let db_seats: Vec<(i32, bigdecimal::BigDecimal, bookit_db::models::SeatStatus)> =
+        schedule_seats::table
+            .filter(schedule_seats::id.eq_any(&request.seat_ids))
+            .filter(schedule_seats::schedule_id.eq(request.schedule_id))
+            .select((schedule_seats::id, schedule_seats::price, schedule_seats::status))
+            .load(&mut conn)
+            .map_err(|_| AppError::internal("failed to load seats"))?;
 
-    if seat_prices.len() != request.seat_ids.len() {
+    if db_seats.len() != request.seat_ids.len() {
         return Err(AppError::bad_request(
             "one or more seats do not belong to the requested schedule",
         ));
     }
 
+    for (seat_id, _, status) in &db_seats {
+        if *status == bookit_db::models::SeatStatus::Booked {
+            return Err(AppError::bad_request(format!(
+                "seat {} is already booked",
+                seat_id
+            )));
+        }
+    }
+
     let mut sub_total = bigdecimal::BigDecimal::from(0);
-    for price in seat_prices {
+    for (_, price, _) in &db_seats {
         sub_total += price;
     }
     use std::str::FromStr;
@@ -282,13 +297,13 @@ pub async fn create_razorpay_order(
         return Err(AppError::bad_request("at least one seat_id is required"));
     }
 
-    // 1. Verify Seat Locks in Redis
+    // Verify seat locks — uses context key (Key 2) for an O(1) per-seat ownership check.
     for seat_id in &request.seat_ids {
-        let owner = state
+        if !state
             .single_node_lock
-            .get_lock_owner(request.schedule_id, *seat_id)
-            .await;
-        if owner != Some(user_id) {
+            .user_holds_lock(request.schedule_id, *seat_id, user_id)
+            .await
+        {
             return Err(AppError::bad_request(
                 "one or more seats are not locked by this user",
             ));

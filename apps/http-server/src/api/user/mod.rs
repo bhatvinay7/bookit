@@ -35,6 +35,10 @@ pub fn user_routes(state: Arc<AppState>) -> Router {
             get(schedules_v2::get_schedule_seats),
         )
         .route(
+            "/schedules_v2/:id/my-locks",
+            get(schedules_v2::get_my_locked_seats),
+        )
+        .route(
             "/schedules_v2/show/:show_id",
             get(schedules_v2::get_schedules_for_show),
         )

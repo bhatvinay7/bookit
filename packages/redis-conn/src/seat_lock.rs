@@ -38,6 +38,17 @@ pub trait SeatLock: Send + Sync {
 
     async fn get_lock_owner(&self, showtime_id: i32, seat_id: i32) -> Option<i32>;
 
+    /// O(1) check: returns `true` if the per-user context key exists, meaning
+    /// `user_id` currently holds the lock for `seat_id` in `showtime_id`.
+    /// Because all keys are written/deleted atomically, this being `true`
+    /// implies Key 1 (`seat_lock_key`) and the user ZSET entry also exist.
+    async fn user_holds_lock(&self, showtime_id: i32, seat_id: i32, user_id: i32) -> bool;
+
+    /// Returns the seat IDs that `user_id` currently has locked for `showtime_id`
+    /// by reading the existing `{showtime_id}:user:{user_id}` ZSET.
+    /// Used by the page-refresh recovery endpoint.
+    async fn get_user_locked_seats(&self, showtime_id: i32, user_id: i32) -> Vec<i32>;
+
     async fn get_schedule_seat_bitmap_state_cluster(&self, bitmap_key: &str) -> Vec<u8>;
 
     async fn set_schedule_seat_bitmap_state_cluster(
@@ -65,3 +76,4 @@ pub trait SeatLock: Send + Sync {
         queue_member: &str,
     );
 }
+

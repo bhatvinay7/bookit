@@ -207,24 +207,70 @@ pub async fn process_messages(
                         user_id_val, seat_ids
                     );
 
-                    // Check SingleNodeLock for all seats
-                    let mut all_locked = true;
+                    // Dual-key validation: both Key 1 (ownership) and Key 2 (user context)
+                    // must be present and belong to the correct user.
+                    // Since both keys are written/deleted atomically in Lua, if they diverge
+                    // it means the lock expired between the HTTP pre-flight and now.
+                    let mut lock_failure_reason: Option<String> = None;
                     for &seat_id in &seat_ids {
+                        // Key 1: general lock ownership
                         let owner = seat_lock.get_lock_owner(schedule_id_val, seat_id).await;
-                        if owner != Some(user_id_val) {
+                        match owner {
+                            None => {
+                                tracing::error!(
+                                    user_id = user_id_val,
+                                    schedule_id = schedule_id_val,
+                                    seat_id,
+                                    "Seat lock (Key 1) does not exist (expired or never acquired); marking payment failed."
+                                );
+                                lock_failure_reason = Some(format!(
+                                    "seat lock not found for seat {} (user {})",
+                                    seat_id, user_id_val
+                                ));
+                                break;
+                            }
+                            Some(actual_owner) if actual_owner != user_id_val => {
+                                tracing::error!(
+                                    user_id = user_id_val,
+                                    schedule_id = schedule_id_val,
+                                    seat_id,
+                                    actual_owner,
+                                    "Seat lock belongs to a different user; marking payment failed."
+                                );
+                                lock_failure_reason = Some(format!(
+                                    "seat {} is locked by user {} not user {}",
+                                    seat_id, actual_owner, user_id_val
+                                ));
+                                break;
+                            }
+                            Some(_) => {} // Key 1 OK — proceed to Key 2 check
+                        }
+
+                        // Key 2: per-user context key (O(1) existence check)
+                        let ctx_ok = seat_lock
+                            .user_holds_lock(schedule_id_val, seat_id, user_id_val)
+                            .await;
+                        if !ctx_ok {
                             tracing::error!(
-                                "Lock expired or invalid for seat {}! Sending to DLQ.",
-                                seat_id
+                                user_id = user_id_val,
+                                schedule_id = schedule_id_val,
+                                seat_id,
+                                "User context key (Key 2) missing for seat; lock may have expired mid-flight."
                             );
-                            all_locked = false;
+                            lock_failure_reason = Some(format!(
+                                "user context lock not found for seat {} (user {})",
+                                seat_id, user_id_val
+                            ));
                             break;
                         }
                     }
 
-                    if !all_locked {
+
+                    if let Some(reason) = lock_failure_reason {
                         if let Ok(mut db_conn) = db_pool.get() {
-                            let _ = diesel::sql_query("UPDATE payment_requests SET status = CAST('failed' AS payment_request_status), failure_reason = 'seat lock expired before processing', updated_at = NOW() WHERE id = $1 AND status <> CAST('succeeded' AS payment_request_status)")
-                                .bind::<diesel::sql_types::Uuid,_>(payment_request_id)
+                            let _ = diesel::sql_query("UPDATE payment_requests SET status = CAST('failed' AS payment_request_status), failure_reason = $2, updated_at = NOW() WHERE id = $1 AND status <> CAST('succeeded' AS payment_request_status)")
+                                .bind::<diesel::sql_types::Uuid, _>(payment_request_id)
+                                .bind::<diesel::sql_types::Text, _>(&reason)
                                 .execute(&mut db_conn);
                         }
                         if let Ok(mut redis_conn) = redis_pool.get().await {

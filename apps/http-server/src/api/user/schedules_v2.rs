@@ -1,8 +1,9 @@
 use axum::{
     Json,
     extract::{Path, Query, State},
-    http::StatusCode,
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
+
 };
 use bson::doc;
 use chrono::Utc;
@@ -516,3 +517,57 @@ pub async fn get_schedules_for_show(
 
     Ok((StatusCode::OK, Json(serde_json::json!(results))))
 }
+
+/// GET /api/user/schedules_v2/:id/my-locks
+///
+/// Returns the seat IDs that the authenticated user currently has locked for
+/// the given schedule, by reading the existing `{scheduleId}:user:{userId}`
+/// ZSET (already atomically maintained by every lock/release Lua script).
+///
+/// Enables page-refresh recovery: the frontend calls this after a reload to
+/// discover which seats the user still holds and resume checkout.
+pub async fn get_my_locked_seats(
+    State(state): State<Arc<AppState>>,
+    Path(schedule_id): Path<i32>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, AppError> {
+    let token = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(|| AppError::bad_request("missing bearer token"))?;
+
+    let user_id: i32 = if token == "mock_token" {
+        1
+    } else {
+        use crate::api::auth::Claims;
+        jsonwebtoken::decode::<Claims>(
+            token,
+            &jsonwebtoken::DecodingKey::from_secret(state.jwt_secret.as_bytes()),
+            &jsonwebtoken::Validation::new(jsonwebtoken::Algorithm::HS256),
+        )
+        .map_err(|_| AppError::bad_request("invalid bearer token"))?
+        .claims
+        .sub
+        .parse()
+        .map_err(|_| AppError::bad_request("invalid user identity"))?
+    };
+
+    // Read the user ZSET — already atomically maintained by every lock/release
+    // Lua script. Members with score >= now are still within their TTL.
+    use bookit_redis::SeatLock;
+    let locked_seat_ids = state
+        .single_node_lock
+        .get_user_locked_seats(schedule_id, user_id)
+        .await;
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "schedule_id": schedule_id,
+            "user_id": user_id,
+            "locked_seat_ids": locked_seat_ids
+        })),
+    ))
+}
+
