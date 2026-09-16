@@ -2386,6 +2386,7 @@ dependencies = [
  "chrono",
  "dashmap",
  "dotenvy",
+ "fastrand",
  "futures-util",
  "jsonwebtoken 10.4.0",
  "lapin",

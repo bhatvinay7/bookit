@@ -27,6 +27,7 @@ bytes = "1"
 rmq-conn = { version = "0.1.0", path = "../../packages/rmq-conn" }
 lapin = { version = "4.10.0", features = ["rustls"] }
 futures-util = "0.3.34"
+fastrand = "2.5.0"
 
 
 [build-dependencies]

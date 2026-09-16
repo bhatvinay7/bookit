@@ -1,6 +1,7 @@
 mod circuit_breaker;
 mod grpc_service;
 mod proxy;
+mod rate_limit_sliding;
 mod state;
 
 pub mod locking {
@@ -205,13 +206,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // for every API route.
         .route("/health", axum::routing::get(proxy::health))
         .nest("/api", proxy_router)
-        .with_state(state)
+        .with_state(state.clone())
         .layer(configured_cors())
         .layer(bookit_telemetry::HttpTraceLayer::new(|extensions| {
             extensions
                 .get::<axum::extract::MatchedPath>()
                 .map(|path| path.as_str().to_owned())
-        }));
+        }))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit_middleware,
+        ));
 
     let addr: SocketAddr = std::env::var("GATEWAY_KEEPER_ADDR")
         .unwrap_or_else(|_| "0.0.0.0:8080".to_string())
@@ -360,4 +365,37 @@ fn validate_seats(
         ));
     }
     Ok(())
+}
+
+async fn rate_limit_middleware(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<Response, ApiError> {
+    let identifier = match authenticated_user(&headers, &state.jwt_secret) {
+        Ok(user_id) => format!("user:{}", user_id),
+        Err(_) => "anonymous".to_string(), // In a real app, use IP address for anonymous users
+    };
+
+    let key = format!("rl:{}", identifier);
+
+    let mut conn = state
+        .gateway
+        .redis_pool
+        .get()
+        .await
+        .map_err(|_| ApiError(StatusCode::INTERNAL_SERVER_ERROR, "Redis connection failed"))?;
+
+    let (allowed, _, _) =
+        crate::rate_limit_sliding::check_sliding_window(&mut *conn, &key, 100, 60_000).await;
+
+    if !allowed {
+        return Err(ApiError(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Rate limit exceeded",
+        ));
+    }
+
+    Ok(next.run(req).await)
 }
