@@ -1,80 +1,35 @@
-name: Manual Load Test
+name: Manual Rust Lock Load Test
 
 on:
   workflow_dispatch:
     inputs:
-      target_environment:
-        description: "Target environment (production needs explicit confirmation)"
-        required: true
-        type: choice
-        default: deployment1
-        options: [deployment1, production]
-      test_case:
-        description: "Scenario from bookit-k8s/loadTest.md"
-        required: true
-        type: choice
-        default: peak-spike
-        options: [peak-spike, race-lock, single-seat-lock-ramp, rust-lock-job, endurance-soak]
       duration:
-        description: "Sustained hold duration per stage (5m through 4h); HPA cannot be evaluated from a short burst"
+        description: "Sustained Job duration (5m through 4h)"
         required: true
         type: string
         default: 10m
-      max_vus:
-        description: "Maximum k6 virtual users / Ghz concurrent requests (1-5000)"
-        required: true
-        type: string
-        default: "250"
       target_rps:
-        description: "Target HTTP or gRPC request rate per second (1-5000)"
+        description: "Global lock attempts per second (1-5000)"
         required: true
         type: string
         default: "50"
-      request_path:
-        description: "Safe read-only GET path to exercise, relative to NEXT_PUBLIC_API_URL"
-        required: true
-        type: string
-        default: /health
-      expected_status:
-        description: "Expected HTTP status for the read-only test path"
-        required: true
-        type: string
-        default: "200"
-      response_body_contains:
-        description: "Optional expected text in the response body (proves a real handler response)"
-        required: false
-        type: string
       grpc_payload:
-        description: "Required for lock tests: valid LockSlot JSON for one isolated, free development schedule/seat"
-        required: false
+        description: "LockSlot JSON for one isolated, free development schedule/seat"
+        required: true
         type: string
-      lock_ramp_concurrency:
-        description: "gRPC concurrency for each single-seat stage (1-5000)"
+      lock_concurrency:
+        description: "Independent gRPC connections/workers in the Kubernetes Job (1-5000)"
         required: true
         type: string
         default: "500"
       rust_runner_threads:
-        description: "Tokio worker threads for the in-cluster Rust lock Job (1-32)"
+        description: "Tokio runtime worker threads in the Kubernetes Job (1-32)"
         required: true
         type: string
         default: "4"
-      ws_observers:
-        description: "Development WebSocket observers subscribed to the tested show (1-1000)"
-        required: true
-        type: string
-        default: "25"
-      run_redis_benchmark:
-        description: "Run the separate Redis benchmark (development only; application load already measures Redis)"
-        required: true
-        type: boolean
-        default: false
-      confirm_production:
-        description: "For production only, type RUN-LOAD-TEST"
-        required: false
-        type: string
 
 concurrency:
-  group: manual-load-test-${{ inputs.target_environment }}
+  group: manual-rust-lock-load-deployment1
   cancel-in-progress: false
 
 permissions:
@@ -82,121 +37,54 @@ permissions:
   packages: write
 
 jobs:
-  load-test:
-    name: ${{ inputs.test_case }} against ${{ inputs.target_environment }}
+  rust-lock-load:
+    name: Rust lock Job against deployment1
     runs-on: ubuntu-22.04
-    # Uses the existing environment-scoped API endpoint and KUBECONFIG secrets.
-    environment: ${{ inputs.target_environment == 'production' && 'production' || 'development' }}
+    environment: development
     timeout-minutes: 300
     env:
-      API_URL: ${{ secrets.NEXT_PUBLIC_API_URL }}
       GRPC_SERVER_URL: ${{ secrets.GRPC_SERVER_URL || secrets.GATEWAY_KEEPER_GRPC_URL }}
-      WS_URL: ${{ secrets.NEXT_PUBLIC_WS_BASE_URL }}
       KUBE_DATA: ${{ secrets.KUBECONFIG }}
-      TEST_CASE: ${{ inputs.test_case }}
       TEST_DURATION: ${{ inputs.duration }}
-      TEST_MAX_VUS: ${{ inputs.max_vus }}
       TEST_TARGET_RPS: ${{ inputs.target_rps }}
-      TEST_PATH: ${{ inputs.request_path }}
-      TEST_EXPECTED_STATUS: ${{ inputs.expected_status }}
-      TEST_RESPONSE_BODY_CONTAINS: ${{ inputs.response_body_contains }}
       GRPC_PAYLOAD: ${{ inputs.grpc_payload }}
-      LOCK_RAMP_CONCURRENCY: ${{ inputs.lock_ramp_concurrency }}
+      LOCK_CONCURRENCY: ${{ inputs.lock_concurrency }}
       RUST_RUNNER_THREADS: ${{ inputs.rust_runner_threads }}
-      WS_OBSERVERS: ${{ inputs.ws_observers }}
-      RUN_REDIS_BENCHMARK: ${{ inputs.run_redis_benchmark }}
-      CONFIRM_PRODUCTION: ${{ inputs.confirm_production }}
-      TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
     steps:
       - uses: actions/checkout@v4
 
-      - name: Validate target and load profile
+      - name: Validate isolated development load profile
         run: |
-          expected_branch=deployment1
-          if [ "$TARGET_ENVIRONMENT" = production ]; then expected_branch=main; fi
-          if [ "${{ github.ref_name }}" != "$expected_branch" ]; then
-            echo "Run $TARGET_ENVIRONMENT tests from $expected_branch, not ${{ github.ref_name }}."
+          if [ "${{ github.ref_name }}" != deployment1 ]; then
+            echo "Rust lock tests may run only from deployment1."
             exit 1
           fi
-          if [ "$TARGET_ENVIRONMENT" = production ] && [ "$CONFIRM_PRODUCTION" != RUN-LOAD-TEST ]; then
-            echo "Production load tests require confirm_production=RUN-LOAD-TEST."
-            exit 1
-          fi
-          if [[ "$TEST_DURATION" =~ ^([5-9]|[1-9][0-9]+)m$ ]]; then
-            :
-          elif [[ "$TEST_DURATION" =~ ^[1-4]h$ ]]; then
+          if [[ "$TEST_DURATION" =~ ^([5-9]|[1-9][0-9]+)m$ ]] || [[ "$TEST_DURATION" =~ ^[1-4]h$ ]]; then
             :
           else
-            echo "duration must be between 5m and 4h. Sustained load is required to evaluate HPA."
+            echo "duration must be between 5m and 4h."
             exit 1
           fi
-          if ! [[ "$TEST_MAX_VUS" =~ ^[1-9][0-9]*$ ]] || [ "$TEST_MAX_VUS" -gt 5000 ]; then
-            echo "max_vus must be between 1 and 5000."
+          for setting in TEST_TARGET_RPS LOCK_CONCURRENCY; do
+            value=${!setting}
+            if ! [[ "$value" =~ ^[1-9][0-9]*$ ]] || [ "$value" -gt 5000 ]; then
+              echo "$setting must be between 1 and 5000."
+              exit 1
+            fi
+          done
+          if ! [[ "$RUST_RUNNER_THREADS" =~ ^[1-9][0-9]*$ ]] || [ "$RUST_RUNNER_THREADS" -gt 32 ]; then
+            echo "rust_runner_threads must be between 1 and 32."
             exit 1
           fi
-          if ! [[ "$TEST_TARGET_RPS" =~ ^[1-9][0-9]*$ ]] || [ "$TEST_TARGET_RPS" -gt 5000 ]; then
-            echo "target_rps must be between 1 and 5000."
+          if [ -z "$GRPC_SERVER_URL" ] || [ -z "$GRPC_PAYLOAD" ]; then
+            echo "GRPC_SERVER_URL and grpc_payload are required."
             exit 1
           fi
-          if ! [[ "$TEST_EXPECTED_STATUS" =~ ^[1-5][0-9][0-9]$ ]]; then
-            echo "expected_status must be a valid HTTP status code."
-            exit 1
-          fi
-          if { [ "$TEST_CASE" = peak-spike ] || [ "$TEST_CASE" = endurance-soak ]; } && [ -z "$API_URL" ]; then
-            echo "NEXT_PUBLIC_API_URL must be configured in the selected GitHub environment."
-            exit 1
-          fi
-          if [ "$TEST_CASE" = peak-spike ] || [ "$TEST_CASE" = endurance-soak ]; then
-            if [[ ! "$TEST_PATH" =~ ^/ ]] || [[ "$TEST_PATH" == *".."* ]] || [[ "$TEST_PATH" == *$'\n'* ]]; then
-              echo "request_path must be a safe, relative GET path without path traversal."
-              exit 1
-            fi
-          fi
-          if [ "$TEST_CASE" = race-lock ] || [ "$TEST_CASE" = single-seat-lock-ramp ] || [ "$TEST_CASE" = rust-lock-job ]; then
-            if [ "$TARGET_ENVIRONMENT" = production ]; then
-              echo "Lock tests are restricted to deployment1 because they create real seat locks."
-              exit 1
-            fi
-            if [ -z "$GRPC_SERVER_URL" ] || [ -z "$GRPC_PAYLOAD" ]; then
-              echo "Lock tests require the existing GRPC_SERVER_URL secret and an isolated development grpc_payload."
-              exit 1
-            fi
-          fi
-          if [ "$TEST_CASE" = rust-lock-job ]; then
-            if ! [[ "$RUST_RUNNER_THREADS" =~ ^[1-9][0-9]*$ ]] || [ "$RUST_RUNNER_THREADS" -gt 32 ]; then
-              echo "rust_runner_threads must be between 1 and 32."
-              exit 1
-            fi
-          fi
-          if [ "$TEST_CASE" = single-seat-lock-ramp ]; then
-            if [ -z "$WS_URL" ]; then
-              echo "single-seat-lock-ramp requires the existing NEXT_PUBLIC_WS_BASE_URL secret."
-              exit 1
-            fi
-            if ! [[ "$LOCK_RAMP_CONCURRENCY" =~ ^[1-9][0-9]*$ ]] || [ "$LOCK_RAMP_CONCURRENCY" -gt 5000 ]; then
-              echo "lock_ramp_concurrency must be between 1 and 5000."
-              exit 1
-            fi
-            if ! [[ "$WS_OBSERVERS" =~ ^[1-9][0-9]*$ ]] || [ "$WS_OBSERVERS" -gt 1000 ]; then
-              echo "ws_observers must be between 1 and 1000."
-              exit 1
-            fi
-          fi
-          if [ "$RUN_REDIS_BENCHMARK" = true ] && [ "$TARGET_ENVIRONMENT" != deployment1 ]; then
-            echo "redis-benchmark is development-only and is blocked for production."
-            exit 1
-          fi
-        env:
-          TARGET_ENVIRONMENT: ${{ inputs.target_environment }}
 
       - uses: azure/setup-kubectl@v4
+      - uses: docker/setup-buildx-action@v3
 
-      - name: Set up Docker Buildx for Rust lock Job
-        if: ${{ inputs.test_case == 'rust-lock-job' }}
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GitHub Container Registry for Rust lock Job
-        if: ${{ inputs.test_case == 'rust-lock-job' }}
+      - name: Log in to GitHub Container Registry
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -204,7 +92,6 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build the immutable Rust lock Job image
-        if: ${{ inputs.test_case == 'rust-lock-job' }}
         uses: docker/build-push-action@v5
         with:
           context: .
@@ -217,7 +104,7 @@ jobs:
       - name: Configure Kubernetes access
         run: |
           if [ -z "$KUBE_DATA" ]; then
-            echo "KUBECONFIG must be configured in the selected GitHub environment."
+            echo "KUBECONFIG must be configured in the development environment."
             exit 1
           fi
           mkdir -p "$HOME/.kube"
@@ -232,98 +119,18 @@ jobs:
 
       - name: Record pre-test autoscaler state
         run: |
-          kubectl -n bookit get hpa,deploy,pods -o wide
-          kubectl top pods -n bookit || true
-          echo "Open Grafana → testLoad → Bookit Load Test and select this workflow's time window."
+          mkdir -p load-test-results/cluster-evidence
+          kubectl -n bookit get hpa,deploy,pods -o wide | tee load-test-results/pre-test-state.txt
+          kubectl top pods -n bookit | tee load-test-results/pre-test-pod-usage.txt || true
 
       - name: Collect HPA, pod, and Gateway Keeper endpoint evidence
         run: |
-          mkdir -p load-test-results/cluster-evidence
           nohup ./load-tests/collect-cluster-evidence.sh \
             > load-test-results/cluster-evidence/collector.log 2>&1 &
           echo $! > load-test-results/cluster-evidence/collector.pid
 
-      - name: Run sustained HTTP peak or soak scenario
-        if: ${{ inputs.test_case == 'peak-spike' || inputs.test_case == 'endurance-soak' }}
-        run: |
-          docker run --rm \
-            -e LOAD_TEST_API_URL="$API_URL" \
-            -e LOAD_TEST_PATH="$TEST_PATH" \
-            -e LOAD_TEST_PROFILE="$TEST_CASE" \
-            -e LOAD_TEST_DURATION="$TEST_DURATION" \
-            -e LOAD_TEST_MAX_VUS="$TEST_MAX_VUS" \
-            -e LOAD_TEST_TARGET_RPS="$TEST_TARGET_RPS" \
-            -e LOAD_TEST_EXPECTED_STATUS="$TEST_EXPECTED_STATUS" \
-            -e LOAD_TEST_RESPONSE_BODY_CONTAINS="$TEST_RESPONSE_BODY_CONTAINS" \
-            -v "$PWD/load-tests/k6:/scripts:ro" \
-            -v "$PWD/load-test-results:/results" \
-            grafana/k6:0.52.0 run --summary-export "/results/${TEST_CASE}.json" /scripts/bookit.js
-
-      - uses: actions/setup-go@v5
-        if: ${{ inputs.test_case == 'race-lock' || inputs.test_case == 'single-seat-lock-ramp' }}
-        with:
-          go-version: '1.22.x'
-
-      - name: Run gRPC race and release the isolated seat lock
-        if: ${{ inputs.test_case == 'race-lock' }}
-        run: |
-          go install github.com/bojand/ghz/cmd/ghz@v0.120.0
-          target="${GRPC_SERVER_URL#http://}"
-          target="${target#https://}"
-          target="${target%%/*}"
-          unlock() {
-            "$HOME/go/bin/ghz" --insecure \
-              --proto apps/gateway-keeper/proto/locking.proto \
-              --call locking.SlotLockingService.UnlockSlot \
-              --data "$GRPC_PAYLOAD" --total 1 "$target" >/dev/null || true
-          }
-          trap unlock EXIT
-          "$HOME/go/bin/ghz" --insecure \
-            --proto apps/gateway-keeper/proto/locking.proto \
-            --call locking.SlotLockingService.LockSlot \
-            --data "$GRPC_PAYLOAD" \
-            --connections 20 --concurrency "$TEST_MAX_VUS" \
-            --rps "$TEST_TARGET_RPS" --duration "$TEST_DURATION" \
-            --format json --output load-test-results/race-lock.json "$target"
-          jq -e '(.count // 0) > 0 and ([((.statusCodeDistribution // {}) | to_entries[]? | select(.key != "OK") | .value)] | add // 0) == 0' \
-            load-test-results/race-lock.json >/dev/null
-
-      - name: Run staged single-seat lock contention ramp
-        if: ${{ inputs.test_case == 'single-seat-lock-ramp' }}
-        run: |
-          go install github.com/bojand/ghz/cmd/ghz@v0.120.0
-          go install github.com/fullstorydev/grpcurl/cmd/grpcurl@v1.9.3
-          showtime_id=$(jq -er '.showtime_id // .showtimeId' <<<"$GRPC_PAYLOAD")
-          mkdir -p load-test-results
-          kubectl -n monitoring rollout status deployment/load-test-pushgateway --timeout=120s
-          kubectl -n monitoring port-forward service/load-test-pushgateway 9091:9091 \
-            > load-test-results/pushgateway-port-forward.log 2>&1 &
-          pushgateway_pid=$!
-          export LOAD_TEST_PUSHGATEWAY_URL=http://127.0.0.1:9091
-          export LOAD_TEST_RUN_ID="${{ github.run_id }}"
-          export LOCK_RAMP_STAGE_DURATION="$TEST_DURATION"
-          trap 'kill "$pushgateway_pid" 2>/dev/null || true; wait "$pushgateway_pid" 2>/dev/null || true' EXIT
-          for attempt in {1..30}; do
-            curl --fail --silent "$LOAD_TEST_PUSHGATEWAY_URL/-/ready" >/dev/null && break
-            sleep 1
-          done
-          curl --fail --silent "$LOAD_TEST_PUSHGATEWAY_URL/-/ready" >/dev/null
-          ./load-tests/push-prometheus-metrics.sh run "$WS_OBSERVERS"
-          docker run --rm \
-            -e LOAD_TEST_WS_URL="$WS_URL" \
-            -e LOAD_TEST_SHOWTIME_ID="$showtime_id" \
-            -e LOAD_TEST_WS_OBSERVERS="$WS_OBSERVERS" \
-            -v "$PWD/load-tests/k6:/scripts:ro" \
-            grafana/k6:0.52.0 run /scripts/seat-lock-observer.js \
-            > load-test-results/ws-observer.log 2>&1 &
-          observer_pid=$!
-          trap 'kill "$observer_pid" "$pushgateway_pid" 2>/dev/null || true; wait "$observer_pid" 2>/dev/null || true; wait "$pushgateway_pid" 2>/dev/null || true' EXIT
-          ./load-tests/run-single-seat-lock-ramp.sh
-
       - name: Run Rust multithreaded lock Job in Kubernetes
-        if: ${{ inputs.test_case == 'rust-lock-job' }}
         run: |
-          mkdir -p load-test-results
           case "$TEST_DURATION" in
             *m) duration_seconds=$(( ${TEST_DURATION%m} * 60 )) ;;
             *h) duration_seconds=$(( ${TEST_DURATION%h} * 3600 )) ;;
@@ -337,7 +144,7 @@ jobs:
             --from-file=LOAD_TEST_GRPC_PAYLOAD=load-test-results/rust-lock-payload.json \
             --from-literal=LOAD_TEST_RPS="$TEST_TARGET_RPS" \
             --from-literal=LOAD_TEST_DURATION_SECONDS="$duration_seconds" \
-            --from-literal=LOAD_TEST_CONCURRENCY="$LOCK_RAMP_CONCURRENCY" \
+            --from-literal=LOAD_TEST_CONCURRENCY="$LOCK_CONCURRENCY" \
             --from-literal=LOAD_TEST_THREADS="$RUST_RUNNER_THREADS" \
             --from-literal=LOAD_TEST_RUN_ID="${{ github.run_id }}" \
             --from-literal=LOAD_TEST_PUSHGATEWAY_URL="http://load-test-pushgateway.monitoring.svc.cluster.local:9091" \
@@ -355,25 +162,11 @@ jobs:
           kubectl -n bookit get pods -l job-name="$job_name" -o yaml > load-test-results/rust-lock-pod.yaml || true
           exit "$job_status"
 
-      - name: Run in-cluster Redis benchmark
-        if: ${{ inputs.run_redis_benchmark }}
-        run: |
-          redis_pod=$(kubectl -n bookit get pods -l app=redis-ha \
-            -o jsonpath='{.items[0].metadata.name}')
-          if [ -z "$redis_pod" ]; then
-            echo "No in-cluster redis-ha pod found; Redis is cloud-managed or not installed, so skipping benchmark."
-            exit 0
-          fi
-          kubectl -n bookit exec "$redis_pod" -c redis -- env \
-            LOAD_TEST_REQUESTS=100000 LOAD_TEST_CLIENTS=100 \
-            sh -c 'redis-benchmark -a "$REDIS_PASSWORD" -n "$LOAD_TEST_REQUESTS" -c "$LOAD_TEST_CLIENTS" -t set,get,lpush'
-
       - name: Record post-test autoscaler state
         if: always()
         run: |
-          kubectl -n bookit get hpa,deploy,pods -o wide || true
-          kubectl top pods -n bookit || true
-          mkdir -p load-test-results/cluster-evidence
+          kubectl -n bookit get hpa,deploy,pods -o wide | tee load-test-results/post-test-state.txt || true
+          kubectl top pods -n bookit | tee load-test-results/post-test-pod-usage.txt || true
           kubectl -n bookit get hpa -o json > load-test-results/cluster-evidence/hpa-post-test.json || true
           kubectl -n bookit get pods -o json > load-test-results/cluster-evidence/pods-post-test.json || true
           kubectl -n bookit get endpointslices -l kubernetes.io/service-name=gateway-keeper -o json \
@@ -386,14 +179,14 @@ jobs:
             kill "$(cat load-test-results/cluster-evidence/collector.pid)" 2>/dev/null || true
           fi
 
-      - name: Remove disposable Rust lock Job configuration
-        if: ${{ always() && inputs.test_case == 'rust-lock-job' }}
+      - name: Remove disposable Job configuration
+        if: always()
         run: kubectl -n bookit delete configmap manual-load-test-config --ignore-not-found
 
-      - name: Upload load-test reports
+      - name: Upload Rust load-test reports
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: load-test-${{ inputs.test_case }}-${{ github.run_id }}
+          name: rust-lock-load-${{ github.run_id }}
           path: load-test-results/
           if-no-files-found: warn
