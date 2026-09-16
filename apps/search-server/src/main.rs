@@ -1,11 +1,11 @@
 mod api;
 mod es;
 mod grpc;
+mod outbox;
 mod stream;
 mod types;
 
 use axum::{Router, routing::get};
-use bookit_mongo::models::show::Show;
 use bookit_proto::search::search_service_server::SearchServiceServer;
 use dotenvy::dotenv;
 use mongodb::{Client as MongoClient, options::ClientOptions};
@@ -26,35 +26,44 @@ async fn main() {
     // Setup Elasticsearch Client
     let es_url =
         env::var("ELASTICSEARCH_URL").unwrap_or_else(|_| "http://localhost:9200".to_string());
-    let es_client = HttpClient::new();
-
-    // Setup MongoDB Client
-    let mongo_url = env::var("MONGODB_URL").expect("MONGODB_URL must be set");
-    let db_name = env::var("MONGODB_DB").unwrap_or_else(|_| "bookit".to_string());
-
-    let mut client_options = ClientOptions::parse(&mongo_url).await.unwrap();
-    client_options.app_name = Some("search-server".to_string());
-    let mongo_client = MongoClient::with_options(client_options).unwrap();
+    let es_client = HttpClient::builder()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .expect("search HTTP client configuration must be valid");
 
     // Setup Postgres DB Pool
     let db_pool = bookit_db::db::create_db_pool();
+
+    // The durable search outbox and its resume-token checkpoint live with the
+    // source show data in MongoDB; PostgreSQL remains for schedules and search
+    // availability filtering.
+    let mongo_url = env::var("MONGODB_URL").expect("MONGODB_URL must be set");
+    let mongo_db_name = env::var("MONGODB_DB").unwrap_or_else(|_| "bookit".to_string());
+    let mut mongo_options = ClientOptions::parse(&mongo_url)
+        .await
+        .expect("MONGODB_URL must be valid");
+    mongo_options.app_name = Some("search-server".to_string());
+    let mongo_client =
+        MongoClient::with_options(mongo_options).expect("MongoDB client options must be valid");
+    let mongo_database = mongo_client.database(&mongo_db_name);
 
     let app_state = Arc::new(AppState {
         es_client: es_client.clone(),
         es_url: es_url.clone(),
         db_pool,
+        mongo_database,
     });
 
-    // Initialize ES Index & Sync
-    let shows_coll = mongo_client.database(&db_name).collection::<Show>("shows");
+    // The CDC worker writes every MongoDB show mutation to the durable search
+    // outbox before advancing its checkpoint. Direct startup re-indexing would
+    // race an ordered delete/upsert replay, so this process only creates the
+    // index and drains the outbox.
     es::init_es_index(&es_client, &es_url).await;
-    es::initial_sync(&shows_coll, &es_client, &es_url).await;
 
-    // Start Redis Change Stream Consumer in background
+    // Start durable CDC outbox consumer in background.
     let state_clone = app_state.clone();
-    tokio::spawn(async move {
-        stream::watch_redis_stream(state_clone).await;
-    });
+    tokio::spawn(async move { stream::watch_search_outbox(state_clone).await });
 
     // Start gRPC Server
     let grpc_state = app_state.clone();

@@ -1,109 +1,98 @@
-use redis::AsyncCommands;
-use std::sync::Arc;
+use anyhow::{Result, anyhow};
+use std::{sync::Arc, time::Duration};
 
-use crate::types::AppState;
+use crate::{outbox, types::AppState};
 
-pub async fn watch_redis_stream(state: Arc<AppState>) {
-    let redis_pool = redis_conn::establish_pool()
-        .await
-        .expect("Failed to create Redis pool for search-server");
+const IDLE_POLL_INTERVAL: Duration = Duration::from_millis(250);
 
-    let stream_key = "cdc:shows";
-    let group_name = "search-server-group";
-    let consumer_name = "search-server-1";
-
-    tracing::info!("Watching Redis Stream '{}' for CDC events...", stream_key);
-
-    // Initialize group. Ignore error if it already exists.
-    let mut redis_cli = redis_pool.get().await.unwrap();
-    let _: redis::RedisResult<()> = redis_cli
-        .xgroup_create_mkstream(stream_key, group_name, "0")
-        .await;
+pub async fn watch_search_outbox(state: Arc<AppState>) {
+    tracing::info!("Draining durable search outbox for Elasticsearch changes");
 
     loop {
-        let mut conn = match redis_pool.get().await {
-            Ok(c) => c,
-            Err(e) => {
-                tracing::error!("Failed to get Redis connection: {}", e);
-                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        match outbox::ensure_collections(&state.mongo_database).await {
+            Ok(()) => break,
+            Err(error) => {
+                tracing::error!(%error, "MongoDB search outbox setup failed; retrying");
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+        }
+    }
+
+    let mut consecutive_failures = 0;
+
+    loop {
+        let event = match outbox::claim_next(&state.mongo_database).await {
+            Ok(event) => event,
+            Err(error) => {
+                tracing::error!(%error, "MongoDB search outbox claim failed; retrying");
+                tokio::time::sleep(Duration::from_secs(2)).await;
                 continue;
             }
         };
 
-        let opts = redis::streams::StreamReadOptions::default()
-            .group(group_name, consumer_name)
-            .block(5000)
-            .count(10);
+        let Some(event) = event else {
+            consecutive_failures = 0; // reset on idle
+            tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+            continue;
+        };
 
-        let result: redis::RedisResult<redis::streams::StreamReadReply> =
-            conn.xread_options(&[stream_key], &[">"], &opts).await;
+        let carrier = bookit_telemetry::payload_carrier(&serde_json::json!({
+            "_trace_context": event.trace_context,
+        }));
+        let span = bookit_telemetry::operation_span(
+            "search outbox process",
+            "consumer",
+            Some(bookit_telemetry::extract_context(&carrier)),
+        );
+        let result = bookit_telemetry::in_result_span(span, apply_event(&state, &event)).await;
 
         match result {
-            Ok(reply) => {
-                for key in reply.keys {
-                    for id in key.ids {
-                        if let Some(payload_str) = id.map.get("payload")
-                            && let Ok(json_str) =
-                                redis::from_redis_value::<String>(payload_str.clone())
-                            && let Ok(event) = serde_json::from_str::<serde_json::Value>(&json_str)
-                        {
-                            process_cdc_event(&state, &event).await;
-                        }
-                        // ACK the message
-                        let _: () = conn.xack(stream_key, group_name, &[&id.id]).await.unwrap();
-                    }
+            Ok(()) => {
+                consecutive_failures = 0;
+                if let Err(error) = outbox::mark_indexed(&state.mongo_database, &event).await {
+                    tracing::error!(sequence = event.sequence, %error, "Elasticsearch write succeeded but search outbox acknowledgement failed; it will be safely replayed");
                 }
             }
-            Err(e) => {
-                tracing::error!("Redis stream read error: {}", e);
-                tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            Err(error) => {
+                consecutive_failures += 1;
+                let delay_seconds = 2_u64.pow(consecutive_failures.clamp(1, 8) as u32).min(300);
+                tracing::warn!(sequence = event.sequence, show_id = %event.show_id, attempts = consecutive_failures, delay = delay_seconds, %error, "Elasticsearch unavailable; retaining search outbox event for replay");
+                tokio::time::sleep(Duration::from_secs(delay_seconds)).await;
             }
         }
     }
 }
 
-pub async fn process_cdc_event(state: &AppState, event: &serde_json::Value) {
-    let carrier = bookit_telemetry::payload_carrier(event);
-    let span = bookit_telemetry::operation_span(
-        "cdc:shows process",
-        "consumer",
-        Some(bookit_telemetry::extract_context(&carrier)),
-    );
-    bookit_telemetry::in_span(span, async {
-        if let (Some(op), Some(id)) = (event["op"].as_str(), event["id"].as_str()) {
-            let doc_url = format!("{}/shows/_doc/{}", state.es_url, id);
-
-            match op {
-                "insert" | "update" | "replace" => {
-                    if let Some(doc) = event.get("full_document") {
-                        match state
-                            .es_client
-                            .put(&doc_url)
-                            .json(doc)
-                            .send()
-                            .await
-                            .and_then(|r| r.error_for_status())
-                        {
-                            Ok(_) => tracing::info!("Synced to ES ({}): {}", op, id),
-                            Err(error) => tracing::error!(%error, "Elasticsearch sync failed"),
-                        }
-                    }
-                }
-                "delete" => {
-                    match state
-                        .es_client
-                        .delete(&doc_url)
-                        .send()
-                        .await
-                        .and_then(|r| r.error_for_status())
-                    {
-                        Ok(_) => tracing::info!("Deleted from ES: {}", id),
-                        Err(error) => tracing::error!(%error, "Elasticsearch delete failed"),
-                    }
-                }
-                _ => {}
+async fn apply_event(state: &AppState, event: &outbox::ClaimedSearchEvent) -> Result<()> {
+    let document_url = format!("{}/shows/_doc/{}", state.es_url, event.show_id);
+    match event.operation.as_str() {
+        "upsert" => {
+            let document = event
+                .document
+                .as_ref()
+                .ok_or_else(|| anyhow!("upsert search outbox event has no document"))?;
+            state
+                .es_client
+                .put(&document_url)
+                .json(document)
+                .send()
+                .await?
+                .error_for_status()?;
+            tracing::info!(sequence = event.sequence, show_id = %event.show_id, "Indexed search outbox event");
+            Ok(())
+        }
+        "delete" => {
+            let response = state.es_client.delete(&document_url).send().await?;
+            // DELETE is idempotent: a 404 means a prior retry already removed
+            // the document, so treating it as success cannot resurrect data.
+            if response.status().is_success() || response.status() == reqwest::StatusCode::NOT_FOUND
+            {
+                tracing::info!(sequence = event.sequence, show_id = %event.show_id, "Deleted search outbox document");
+                Ok(())
+            } else {
+                Err(response.error_for_status().unwrap_err().into())
             }
         }
-    })
-    .await;
+        other => Err(anyhow!("unsupported search outbox operation {other}")),
+    }
 }

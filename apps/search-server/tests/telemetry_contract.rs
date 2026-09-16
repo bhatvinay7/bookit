@@ -9,5 +9,5 @@ fn search_server_traces_every_ingress_path() {
     assert!(main.contains("init_telemetry(\"bookit-search-server\")"));
     assert!(main.contains("HttpTraceLayer"));
     assert!(grpc.contains("bookit_telemetry::grpc_request"));
-    assert!(stream.contains("bookit_telemetry::payload_carrier(event)"));
+    assert!(stream.contains("bookit_telemetry::payload_carrier"));
 }

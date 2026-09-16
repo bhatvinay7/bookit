@@ -1,8 +1,8 @@
+mod outbox;
 mod stream;
 
 use dotenvy::dotenv;
 use mongodb::{Client as MongoClient, bson::Document, options::ClientOptions};
-use redis_conn::establish_pool;
 use std::env;
 use tracing::info;
 
@@ -20,17 +20,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client_options = ClientOptions::parse(&mongo_url).await?;
     client_options.app_name = Some("cdc-worker".to_string());
     let mongo_client = MongoClient::with_options(client_options)?;
-    let coll = mongo_client
-        .database(&db_name)
-        .collection::<Document>("shows");
+    let database = mongo_client.database(&db_name);
+    let coll = database.collection::<Document>("shows");
 
-    // Setup Redis
-    let redis_pool = establish_pool().await?;
-
-    let resume_token_key = "cdc:shows:resume_token";
-    let stream_key = "cdc:shows";
-
-    stream::watch_redis_stream(coll, redis_pool, resume_token_key, stream_key).await;
+    // MongoDB owns both show details and the durable CDC hand-off. The source
+    // resume token advances only after the MongoDB search outbox has the event.
+    stream::watch_search_outbox(coll, database).await;
 
     Ok(())
 }
